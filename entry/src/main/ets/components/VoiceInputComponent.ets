@@ -1,0 +1,834 @@
+import { promptAction } from '@kit.ArkUI';
+import { SpeechRecognitionService } from '../services/SpeechRecognitionService';
+import { AppContext } from '../utils/AppContext';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+import { vibrator } from '@kit.SensorServiceKit';
+import { audio } from '@kit.AudioKit';
+import { ThemeManager } from '../utils/ThemeManager';
+import { Logger } from '../utils/Logger';
+import { Constants, PromptTemplate } from '../utils/Constants';
+import { PromptRecommendationManager } from '../utils/PromptRecommendationManager';
+
+// 导入基础动画系统
+import { 
+  BasicAnimations, 
+  AnimationConfigManager
+} from '../animations';
+
+/**
+ * 语音识别状态
+ */
+export enum VoiceRecognitionState {
+  IDLE = 'idle',           // 空闲状态
+  RECORDING = 'recording', // 录音中
+  PROCESSING = 'processing', // 处理中
+  ERROR = 'error'         // 错误状态
+}
+
+/**
+ * 语音输入组件属性
+ */
+@ComponentV2
+export struct VoiceInputComponent {
+  @Param onVoiceResult: (text: string) => void = () => {};  // 语音识别结果回调
+  @Param onStateChange: (state: VoiceRecognitionState) => void = () => {}; // 状态变化回调
+  @Param onSmartPromptTriggered?: (prompt: string) => void = () => {}; // 智能prompt触发回调
+  
+  @Local private recognitionState: VoiceRecognitionState = VoiceRecognitionState.IDLE;
+  @Local private errorText: string = '';
+  @Local private animationScale: number = 1.0;
+  @Local private pulseOpacity: number = 0.3;
+  @Local private rotationAngle: number = 0;
+  @Local private isPressed: boolean = false;
+  @Local private waveAmplitudes: number[] = [0.3, 0.5, 0.8, 0.4, 0.7, 0.2, 0.9, 0.6];
+  @Local private isDarkMode: boolean = false;
+  @Local private speechService: SpeechRecognitionService = new SpeechRecognitionService();
+  private themeManager: ThemeManager = ThemeManager.getInstance();
+  
+  // 简化动画状态
+  @Local private breathingScale: number = 1.0;
+  @Local private energyLevel: number = 0.0;
+  
+  // 语音提示相关
+  @Local private showVoiceTips: boolean = false;
+  @Local private voiceTipText: string = '';
+  @Local private tipRotationIndex: number = 0;
+  private longPressTimer: number = 0;
+  private tipRotationTimer: number = 0;
+  private recommendationManager: PromptRecommendationManager = PromptRecommendationManager.getInstance();
+  
+  async aboutToAppear(): Promise<void> {
+    hilog.info(0x0000, 'VoiceInputComponent', '组件初始化开始');
+    
+    // 初始化动画系统
+    AnimationConfigManager.getInstance().initialize();
+    
+    await this.themeManager.initialize();
+    this.isDarkMode = this.themeManager.getDarkMode();
+    
+    // 初始化推荐管理器
+    await this.recommendationManager.initialize();
+    
+    // 添加主题变更监听器
+    this.themeManager.addThemeListener((isDark: boolean) => {
+      this.isDarkMode = isDark;
+    });
+    
+    this.initializeSpeechService();
+    this.startVoiceTipRotation();
+    hilog.info(0x0000, 'VoiceInputComponent', '组件初始化完成');
+  }
+
+  aboutToDisappear(): void {
+    hilog.info(0x0000, 'VoiceInputComponent', '组件销毁开始，当前状态: %{public}s', this.recognitionState);
+    this.speechService.destroy();
+    
+    // 清理定时器
+    if (this.longPressTimer > 0) {
+      clearTimeout(this.longPressTimer);
+    }
+    if (this.tipRotationTimer > 0) {
+      clearInterval(this.tipRotationTimer);
+    }
+    
+    // 移除主题监听器
+    this.themeManager.removeThemeListener((isDark: boolean) => {
+      this.isDarkMode = isDark;
+    });
+    hilog.info(0x0000, 'VoiceInputComponent', '组件销毁完成');
+  }
+
+  /**
+   * 初始化语音服务
+   */
+  private async initializeSpeechService(): Promise<void> {
+    hilog.info(0x0000, 'VoiceInputComponent', '开始初始化语音服务');
+    
+    try {
+      // 获取应用上下文
+      const context = AppContext.getInstance().getContext();
+      hilog.info(0x0000, 'VoiceInputComponent', '应用上下文获取: %{public}s', context ? '成功' : '失败');
+      
+      // 设置回调
+      this.speechService.setOnResult((text: string) => {
+        hilog.info(0x0000, 'VoiceInputComponent', '收到语音识别结果: %{public}s', text);
+        this.handleVoiceResultInternal(text);
+      });
+
+      this.speechService.setOnError((error: string) => {
+        hilog.error(0x0000, 'VoiceInputComponent', '收到语音识别错误: %{public}s', error);
+        // 不直接显示错误信息，而是显示友好的提示
+        Logger.error('VoiceInputComponent', `语音识别错误: ${error}`);
+        // 提供轻微的触觉反馈，让用户知道有问题发生
+        this.triggerHapticFeedback();
+        // 不设置errorText，让错误卡片不显示
+        this.updateState(VoiceRecognitionState.IDLE); // 直接回到空闲状态
+      });
+
+      this.speechService.setOnStateChange((state: VoiceRecognitionState) => {
+        hilog.info(0x0000, 'VoiceInputComponent', '收到状态变化: %{public}s -> %{public}s', this.recognitionState, state);
+        this.updateState(state);
+      });
+
+      // 初始化服务
+      const initialized = await this.speechService.init(context);
+      if (initialized) {
+        hilog.info(0x0000, 'VoiceInputComponent', '语音服务初始化成功');
+      } else {
+        hilog.error(0x0000, 'VoiceInputComponent', '语音服务初始化失败');
+        Logger.error('VoiceInputComponent', '语音服务初始化失败');
+        // 不显示错误卡片，静默处理
+      }
+    } catch (error) {
+      hilog.error(0x0000, 'VoiceInputComponent', '语音服务初始化异常: %{public}s', JSON.stringify(error));
+      Logger.error('VoiceInputComponent', `语音服务初始化异常: ${JSON.stringify(error)}`);
+      // 不显示错误卡片，静默处理
+    }
+  }
+  
+  build() {
+    Column() {
+      // 简化的语音按钮
+      Button() {
+        // 图标内容
+        if (this.recognitionState === VoiceRecognitionState.PROCESSING) {
+          this.buildProcessingIcon()
+        } else if (this.recognitionState === VoiceRecognitionState.RECORDING) {
+          this.buildRecordingIcon()
+        } else {
+          this.buildMicrophoneIcon()
+        }
+      }
+      .width(this.getButtonWidth())
+      .height(this.getButtonHeight())
+      .backgroundColor(this.getButtonBackgroundColor())
+      .fontColor(Color.White)
+      .borderRadius(this.getButtonRadius())
+      .scale({ 
+        x: this.isPressed ? 0.95 : this.breathingScale, 
+        y: this.isPressed ? 0.95 : this.breathingScale 
+      })
+      .animation({
+        duration: BasicAnimations.QUICK_DURATION,
+        curve: Curve.EaseInOut
+      })
+      .onClick(() => {
+        this.handleVoiceButtonClick();
+      })
+      .onTouch((event) => {
+        if (event.type === TouchType.Down) {
+          this.isPressed = true;
+          this.triggerHapticFeedback();
+          
+          // 启动长按检测 (只在空闲状态)
+          if (this.recognitionState === VoiceRecognitionState.IDLE) {
+            this.longPressTimer = setTimeout(() => {
+              this.showVoiceTips = true;
+              this.triggerHapticFeedback();
+            }, 800); // 800ms后显示提示
+          }
+        } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+          this.isPressed = false;
+          
+          // 清除长按定时器
+          if (this.longPressTimer > 0) {
+            clearTimeout(this.longPressTimer);
+            this.longPressTimer = 0;
+          }
+        }
+      })
+      
+      // 状态指示器（不显示错误状态）
+      if (this.recognitionState !== VoiceRecognitionState.IDLE && 
+          this.recognitionState !== VoiceRecognitionState.ERROR) {
+        this.buildStatusIndicator()
+      }
+      
+      // 错误提示卡片已移除 - 不在UI上显示错误信息
+      
+      // 语音提示卡片 (只在空闲状态显示)
+      if (this.recognitionState === VoiceRecognitionState.IDLE && this.showVoiceTips && this.voiceTipText) {
+        this.buildVoiceTipCard()
+      }
+    }
+    .alignItems(HorizontalAlign.Center)
+  }
+  
+  
+  @Builder
+  buildMicrophoneIcon() {
+    // 简洁的麦克风图标
+    Column() {
+      // 麦克风主体
+      Rect()
+        .width(8)
+        .height(12)
+        .radius(4)
+        .fill('transparent')
+        .border({ width: 1.5, color: this.getIconColor() })
+      
+      // 支架和底座
+      Column() {
+        Rect()
+          .width(1)
+          .height(4)
+          .fill(this.getIconColor())
+        
+        Rect()
+          .width(8)
+          .height(1)
+          .fill(this.getIconColor())
+      }
+      .margin({ top: 1 })
+    }
+    .opacity(this.recognitionState === VoiceRecognitionState.ERROR ? 0.6 : 1.0)
+  }
+  
+  @Builder
+  buildRecordingIcon() {
+    // 录音状态 - 显示停止图标
+    Rect()
+      .width(8)
+      .height(8)
+      .radius(1)
+      .fill('#FFFFFF')
+      .opacity(0.9)
+  }
+  
+  @Builder
+  buildProcessingIcon() {
+    // 处理中动画 - 三个小点
+    Row() {
+      Circle()
+        .width(3)
+        .height(3)
+        .fill(this.getIconColor())
+        .opacity(0.4 + this.pulseOpacity * 0.6)
+        .animation({
+          duration: 600,
+          curve: Curve.EaseInOut,
+          iterations: -1,
+          playMode: PlayMode.Alternate,
+          delay: 0
+        })
+      
+      Circle()
+        .width(3)
+        .height(3)
+        .fill(this.getIconColor())
+        .margin({ left: 2 })
+        .opacity(0.4 + this.pulseOpacity * 0.6)
+        .animation({
+          duration: 600,
+          curve: Curve.EaseInOut,
+          iterations: -1,
+          playMode: PlayMode.Alternate,
+          delay: 200
+        })
+      
+      Circle()
+        .width(3)
+        .height(3)
+        .fill(this.getIconColor())
+        .margin({ left: 2 })
+        .opacity(0.4 + this.pulseOpacity * 0.6)
+        .animation({
+          duration: 600,
+          curve: Curve.EaseInOut,
+          iterations: -1,
+          playMode: PlayMode.Alternate,
+          delay: 400
+        })
+    }
+  }
+  
+  
+  @Builder
+  buildStatusIndicator() {
+    Row() {
+      // 状态指示点
+      Circle()
+        .width(6)
+        .height(6)
+        .fill(this.getStatusIndicatorColor())
+        .opacity(this.pulseOpacity)
+        .animation({
+          duration: 1000,
+          curve: Curve.EaseInOut,
+          iterations: -1,
+          playMode: PlayMode.Alternate
+        })
+      
+      // 状态文本
+      Text(this.getStatusText())
+        .fontSize(12)
+        .fontColor(this.getStatusTextColor())
+        .fontWeight(FontWeight.Medium)
+        .margin({ left: 6 })
+    }
+    .margin({ top: 12 })
+    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+    .backgroundColor(this.getStatusCardBackground())
+    .borderRadius(12)
+    .shadow({
+      radius: 4,
+      color: this.getStatusCardShadow(),
+      offsetX: 0,
+      offsetY: 2
+    })
+  }
+
+  
+  @Builder
+  buildErrorCard() {
+    Column() {
+      Row() {
+        Path()
+          .commands('M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z')
+          .width(16)
+          .height(16)
+          .fill('#FF4757')
+        
+        Text('识别失败')
+          .fontSize(12)
+          .fontColor('#FF4757')
+          .fontWeight(FontWeight.Medium)
+          .margin({ left: 6 })
+      }
+      .margin({ bottom: 4 })
+      
+      Text(this.errorText)
+        .fontSize(11)
+        .fontColor(this.getErrorTextColor())
+        .maxLines(2)
+        .textAlign(TextAlign.Center)
+        .lineHeight(16)
+    }
+    .padding(12)
+    .margin({ top: 8 })
+    .backgroundColor(this.getErrorCardBackground())
+    .borderRadius(8)
+    .border({ width: 1, color: this.getErrorCardBorder() })
+    .shadow({
+      radius: 4,
+      color: this.getErrorCardShadow(),
+      offsetX: 0,
+      offsetY: 2
+    })
+  }
+  
+  /**
+   * 主题已通过ThemeManager管理，此方法保留用于兼容性
+   */
+  private detectColorMode(): void {
+    // 主题状态现在通过ThemeManager管理
+    // 此方法保留用于向后兼容
+  }
+  
+  /**
+   * 触发触觉反馈
+   */
+  private async triggerHapticFeedback(): Promise<void> {
+    try {
+      await vibrator.startVibration({
+        type: 'time',
+        duration: 50
+      }, {
+        id: 0,
+        usage: 'alarm'
+      });
+    } catch (error) {
+      hilog.warn(0x0000, 'VoiceInputComponent', '触觉反馈失败: %{public}s', JSON.stringify(error));
+    }
+  }
+  
+  /**
+   * 真实语音识别
+   */
+  private async startRealSpeechRecognition(): Promise<void> {
+    Logger.info('VoiceInputComponent', '开始真实语音识别');
+
+    try {
+      // 开始语音识别
+      const success = await this.speechService.startRecognition();
+      if (!success) {
+        Logger.error('VoiceInputComponent', '启动语音识别失败');
+        // 不显示错误，直接回到空闲状态
+        this.updateState(VoiceRecognitionState.IDLE);
+        return;
+      }
+
+      Logger.info('VoiceInputComponent', '语音识别已启动');
+    } catch (error) {
+      Logger.error('VoiceInputComponent', `语音识别启动异常: ${error}`);
+      // 不显示错误，直接回到空闲状态
+      this.updateState(VoiceRecognitionState.IDLE);
+    }
+  }
+  
+  /**
+   * 处理语音按钮点击
+   */
+  private async handleVoiceButtonClick(): Promise<void> {
+    hilog.info(0x0000, 'VoiceInputComponent', '语音按钮被点击，当前状态: %{public}s', this.recognitionState);
+    
+    switch (this.recognitionState) {
+      case VoiceRecognitionState.IDLE:
+        hilog.info(0x0000, 'VoiceInputComponent', '当前空闲状态，开始语音识别');
+        await this.startRealSpeechRecognition();
+        break;
+      case VoiceRecognitionState.RECORDING:
+        hilog.info(0x0000, 'VoiceInputComponent', '当前录音状态，停止录音');
+        // 停止录音
+        await this.speechService.stopRecognition();
+        break;
+      case VoiceRecognitionState.PROCESSING:
+        hilog.info(0x0000, 'VoiceInputComponent', '当前处理状态，取消识别');
+        // 取消识别
+        await this.speechService.cancelRecognition();
+        break;
+      case VoiceRecognitionState.ERROR:
+        hilog.info(0x0000, 'VoiceInputComponent', '当前错误状态，重置为空闲');
+        this.updateState(VoiceRecognitionState.IDLE);
+        break;
+      default:
+        hilog.warn(0x0000, 'VoiceInputComponent', '未知状态: %{public}s', this.recognitionState);
+        break;
+    }
+  }
+  
+  /**
+   * 更新状态
+   */
+  private updateState(state: VoiceRecognitionState): void {
+    hilog.info(0x0000, 'VoiceInputComponent', '更新状态: %{public}s -> %{public}s', this.recognitionState, state);
+    
+    this.recognitionState = state;
+    this.onStateChange(state);
+    
+    // 更新动画状态
+    switch (state) {
+      case VoiceRecognitionState.RECORDING:
+        this.animationScale = 1.1;
+        this.pulseOpacity = 0.8;
+        this.startWaveAnimation();
+        hilog.info(0x0000, 'VoiceInputComponent', '启动录音动画');
+        break;
+      case VoiceRecognitionState.PROCESSING:
+        this.animationScale = 1.0;
+        this.pulseOpacity = 0.3;
+        this.startRotationAnimation();
+        hilog.info(0x0000, 'VoiceInputComponent', '启动处理动画');
+        break;
+      case VoiceRecognitionState.ERROR:
+        // 错误状态立即转为空闲状态，不显示错误信息
+        this.animationScale = 0.9; // 稍微缩小一下，提供视觉反馈
+        this.pulseOpacity = 0.3;
+        this.rotationAngle = 0;
+        hilog.warn(0x0000, 'VoiceInputComponent', '进入错误状态，自动转为空闲状态');
+        // 短暂延迟后转为空闲状态，让用户能感知到状态变化
+        setTimeout(() => {
+          this.animationScale = 1.0; // 恢复正常大小
+          this.recognitionState = VoiceRecognitionState.IDLE;
+        }, 300);
+        break;
+      case VoiceRecognitionState.IDLE:
+      default:
+        this.animationScale = 1.0;
+        this.pulseOpacity = 0.3;
+        this.rotationAngle = 0;
+        hilog.info(0x0000, 'VoiceInputComponent', '进入空闲状态');
+        break;
+    }
+  }
+  
+  /**
+   * 启动波形动画
+   */
+  private startWaveAnimation(): void {
+    this.waveAmplitudes = this.waveAmplitudes.map(() => Math.random() * 0.8 + 0.2);
+  }
+  
+  /**
+   * 启动旋转动画
+   */
+  private startRotationAnimation(): void {
+    this.rotationAngle = 360;
+  }
+  
+  /**
+   * 处理语音识别结果
+   */
+  private async handleVoiceResultInternal(text: string): Promise<void> {
+    hilog.info(0x0000, 'VoiceInputComponent', '处理语音识别结果: %{public}s', text);
+    
+    // 检测是否匹配语音触发词
+    await this.checkVoiceTriggerMatch(text);
+    
+    this.onVoiceResult(text);
+  }
+
+  /**
+   * 检测语音触发词匹配
+   */
+  private async checkVoiceTriggerMatch(recognizedText: string): Promise<void> {
+    const lowerText = recognizedText.toLowerCase();
+    
+    // 遍历所有prompt模板，检查语音触发词匹配
+    for (const template of Constants.PROMPT_TEMPLATES) {
+      if (template.voiceTriggers) {
+        for (const trigger of template.voiceTriggers) {
+          if (lowerText.includes(trigger.toLowerCase())) {
+            // 记录语音触发的使用
+            await this.recommendationManager.recordPromptUsage(template.id, true);
+            hilog.info(0x0000, 'VoiceInputComponent', `检测到语音触发词匹配: "${trigger}" -> ${template.title}`);
+            
+            // 如果识别文本主要是触发词（相似度高），则自动应用对应prompt
+            if (this.shouldAutoApplyPrompt(recognizedText, trigger)) {
+              hilog.info(0x0000, 'VoiceInputComponent', `自动应用智能prompt: ${template.prompt}`);
+              if (this.onSmartPromptTriggered) {
+                this.onSmartPromptTriggered(template.prompt);
+              }
+            }
+            
+            return; // 只处理第一个匹配的
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * 判断是否应该自动应用prompt（当语音主要内容就是触发词时）
+   */
+  private shouldAutoApplyPrompt(recognizedText: string, trigger: string): boolean {
+    const cleanText = recognizedText.toLowerCase().trim();
+    const cleanTrigger = trigger.toLowerCase().trim();
+    
+    // 如果识别文本就是触发词或者包含触发词且文本较短，则自动应用
+    return cleanText === cleanTrigger || 
+           (cleanText.includes(cleanTrigger) && cleanText.length <= cleanTrigger.length + 5);
+  }
+  
+  /**
+   * 获取按钮背景颜色 - 与发送按钮风格一致
+   */
+  private getButtonBackgroundColor(): string {
+    switch (this.recognitionState) {
+      case VoiceRecognitionState.RECORDING:
+        return '#FF4757';  // 录音状态使用红色
+      case VoiceRecognitionState.PROCESSING:
+        return '#74B9FF';  // 处理状态使用蓝色
+      case VoiceRecognitionState.ERROR:
+        return '#FF7675';  // 错误状态使用淡红色
+      default:
+        return '#74B9FF';  // 默认状态使用蓝色，与主题色一致
+    }
+  }
+  
+  
+  
+  /**
+   * 获取状态指示器颜色
+   */
+  private getStatusIndicatorColor(): string {
+    switch (this.recognitionState) {
+      case VoiceRecognitionState.RECORDING:
+        return '#FF4757';
+      case VoiceRecognitionState.PROCESSING:
+        return '#74B9FF';
+      case VoiceRecognitionState.ERROR:
+        return '#FF4757';
+      default:
+        return '#74B9FF';
+    }
+  }
+  
+  /**
+   * 获取图标颜色
+   */
+  private getIconColor(): string {
+    switch (this.recognitionState) {
+      case VoiceRecognitionState.RECORDING:
+        return '#FFFFFF';
+      case VoiceRecognitionState.PROCESSING:
+        return '#FFFFFF';
+      case VoiceRecognitionState.ERROR:
+        return '#FFFFFF';
+      default:
+        return '#FFFFFF';
+    }
+  }
+  
+  /**
+   * 获取状态文本
+   */
+  private getStatusText(): string {
+    switch (this.recognitionState) {
+      case VoiceRecognitionState.RECORDING:
+        return '';  // 移除录音状态文字，节省空间
+      case VoiceRecognitionState.PROCESSING:
+        return '正在识别中...';
+      case VoiceRecognitionState.ERROR:
+        return '识别失败，点击重试';
+      default:
+        return '';
+    }
+  }
+  
+  /**
+   * 获取状态文本颜色
+   */
+  private getStatusTextColor(): string {
+    switch (this.recognitionState) {
+      case VoiceRecognitionState.RECORDING:
+        return '#FF4757';
+      case VoiceRecognitionState.PROCESSING:
+        return '#74B9FF';
+      case VoiceRecognitionState.ERROR:
+        return '#FF4757';
+      default:
+        return this.isDarkMode ? '#CCCCCC' : '#666666';
+    }
+  }
+  
+  /**
+   * 获取按钮宽度 - 与发送按钮保持一致
+   */
+  private getButtonWidth(): number {
+    return 40;
+  }
+  
+  /**
+   * 获取按钮高度 - 与发送按钮保持一致
+   */
+  private getButtonHeight(): number {
+    return 40;
+  }
+  
+  /**
+   * 获取按钮圆角 - 与发送按钮保持一致
+   */
+  private getButtonRadius(): number {
+    return 20;
+  }
+  
+  /**
+   * 响应式设计 - 获取图标尺寸
+   */
+  private getIconSize(): number {
+    return 24;
+  }
+  
+  
+  
+  /**
+   * 暗色主题 - 获取状态卡片背景
+   */
+  private getStatusCardBackground(): string {
+    return this.isDarkMode ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.9)';
+  }
+  
+  /**
+   * 暗色主题 - 获取状态卡片阴影
+   */
+  private getStatusCardShadow(): string {
+    return this.isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+  }
+  
+  /**
+   * 暗色主题 - 获取错误卡片背景
+   */
+  private getErrorCardBackground(): string {
+    return this.isDarkMode ? 'rgba(139, 69, 19, 0.2)' : '#FFF5F5';
+  }
+  
+  /**
+   * 暗色主题 - 获取错误卡片边框
+   */
+  private getErrorCardBorder(): string {
+    return this.isDarkMode ? 'rgba(255, 71, 87, 0.4)' : 'rgba(255, 71, 87, 0.2)';
+  }
+  
+  /**
+   * 暗色主题 - 获取错误卡片阴影
+   */
+  private getErrorCardShadow(): string {
+    return this.isDarkMode ? 'rgba(255, 71, 87, 0.2)' : 'rgba(255, 71, 87, 0.1)';
+  }
+  
+  /**
+   * 暗色主题 - 获取错误文本颜色
+   */
+  private getErrorTextColor(): string {
+    return this.isDarkMode ? '#CCCCCC' : '#666666';
+  }
+
+  @Builder
+  buildVoiceTipCard() {
+    Column({ space: 4 }) {
+      Row() {
+        Text('💡')
+          .fontSize(14)
+        
+        Text('语音提示')
+          .fontSize(12)
+          .fontColor('#74B9FF')
+          .fontWeight(FontWeight.Medium)
+          .margin({ left: 4 })
+      }
+      
+      Text(`试试说: "${this.voiceTipText}"`)
+        .fontSize(11)
+        .fontColor(this.getTipTextColor())
+        .textAlign(TextAlign.Center)
+        .lineHeight(16)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .margin({ top: 2 })
+    }
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .margin({ top: 8 })
+    .backgroundColor(this.getTipCardBackground())
+    .borderRadius(12)
+    .border({ width: 1, color: this.getTipCardBorder() })
+    .shadow({
+      radius: 4,
+      color: this.getTipCardShadow(),
+      offsetX: 0,
+      offsetY: 2
+    })
+    .opacity(0.9)
+    .animation({
+      duration: 300,
+      curve: Curve.EaseInOut
+    })
+    .onClick(() => {
+      // 点击提示卡片时隐藏提示
+      this.showVoiceTips = false;
+    })
+  }
+
+  /**
+   * 启动语音提示轮换
+   */
+  private startVoiceTipRotation(): void {
+    // 立即显示第一个提示
+    this.updateVoiceTip();
+    
+    // 设置定期轮换
+    this.tipRotationTimer = setInterval(() => {
+      if (this.recognitionState === VoiceRecognitionState.IDLE && !this.showVoiceTips) {
+        this.updateVoiceTip();
+      }
+    }, 5000); // 每5秒轮换一次
+  }
+
+  /**
+   * 更新语音提示文本
+   */
+  private updateVoiceTip(): void {
+    const allTriggers: string[] = [];
+    
+    // 收集所有语音触发词
+    Constants.PROMPT_TEMPLATES.forEach(template => {
+      if (template.voiceTriggers) {
+        allTriggers.push(...template.voiceTriggers);
+      }
+    });
+    
+    if (allTriggers.length > 0) {
+      // 循环选择不同的触发词
+      this.voiceTipText = allTriggers[this.tipRotationIndex % allTriggers.length];
+      this.tipRotationIndex++;
+    }
+  }
+
+  /**
+   * 获取提示卡片背景色
+   */
+  private getTipCardBackground(): string {
+    return this.isDarkMode ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.95)';
+  }
+
+  /**
+   * 获取提示卡片边框色
+   */
+  private getTipCardBorder(): string {
+    return this.isDarkMode ? 'rgba(116, 185, 255, 0.3)' : 'rgba(116, 185, 255, 0.2)';
+  }
+
+  /**
+   * 获取提示卡片阴影
+   */
+  private getTipCardShadow(): string {
+    return this.isDarkMode ? 'rgba(116, 185, 255, 0.2)' : 'rgba(116, 185, 255, 0.1)';
+  }
+
+  /**
+   * 获取提示文本颜色
+   */
+  private getTipTextColor(): string {
+    return this.isDarkMode ? '#CCCCCC' : '#666666';
+  }
+}

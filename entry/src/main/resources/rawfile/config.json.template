@@ -1,0 +1,12 @@
+{
+  "server": {
+    "baseUrl": "http://YOUR_SERVER_IP:8080/api",
+    "wsUrl": "ws://YOUR_SERVER_IP:8080/api/ws",
+    "searchUrl": "http://YOUR_SERVER_IP:8080"
+  },
+  "app": {
+    "name": "Javis AI Assistant",
+    "version": "2.0.0",
+    "debug": false
+  }
+}

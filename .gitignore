@@ -1,0 +1,37 @@
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+
+# 隐私和安全配置文件
+**/build-profile.json5
+!**/build-profile.json5.template
+**/config.json5
+!**/config.json5.template
+
+# 密钥和证书文件
+*.p12
+*.cer
+*.p7b
+*.jks
+*.keystore
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.temp
+
+# 环境变量文件
+.env
+.env.local
+.env.production
