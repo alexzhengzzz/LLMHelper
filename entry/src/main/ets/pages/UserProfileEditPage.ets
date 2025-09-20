@@ -617,11 +617,11 @@ struct UserProfileEditPage {
         maxSelectNumber: 1
       };
 
-      const photoPicker = new picker.PhotoViewPicker();
-      const photoSelectResult = await photoPicker.select(photoSelectOptions);
-      
+      const photoPicker: picker.PhotoViewPicker = new picker.PhotoViewPicker();
+      const photoSelectResult: picker.PhotoSelectResult = await photoPicker.select(photoSelectOptions);
+
       if (photoSelectResult.photoUris.length > 0) {
-        const imageUri = photoSelectResult.photoUris[0];
+        const imageUri: string = photoSelectResult.photoUris[0];
         this.updateAvatarSetting('image', imageUri);
         Logger.info('UserProfileEditPage', '头像图片选择成功');
       }

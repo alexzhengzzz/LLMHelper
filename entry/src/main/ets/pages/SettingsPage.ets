@@ -1129,11 +1129,11 @@ struct SettingsPage {
         maxSelectNumber: 1
       };
 
-      const photoPicker = new picker.PhotoViewPicker();
-      const photoSelectResult = await photoPicker.select(photoSelectOptions);
-      
+      const photoPicker: picker.PhotoViewPicker = new picker.PhotoViewPicker();
+      const photoSelectResult: picker.PhotoSelectResult = await photoPicker.select(photoSelectOptions);
+
       if (photoSelectResult.photoUris.length > 0) {
-        const imageUri = photoSelectResult.photoUris[0];
+        const imageUri: string = photoSelectResult.photoUris[0];
         await this.updateAvatarSetting(isUserAvatar, 'image', imageUri);
         // 头像图片选择成功
       }

@@ -1,4 +1,3 @@
-import { promptAction } from '@kit.ArkUI';
 import { SpeechRecognitionService } from '../services/SpeechRecognitionService';
 import { AppContext } from '../utils/AppContext';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -26,6 +25,24 @@ export enum VoiceRecognitionState {
 }
 
 /**
+ * 触摸点信息接口
+ */
+interface TouchInfo {
+  globalY?: number;
+  screenY?: number;
+  windowY?: number;
+  y?: number;
+}
+
+/**
+ * 触摸事件扩展接口
+ */
+interface ExtendedTouchEvent {
+  touches?: Array<TouchInfo>;
+  changedTouches?: Array<TouchInfo>;
+}
+
+/**
  * 语音输入组件属性
  */
 @ComponentV2
@@ -43,6 +60,9 @@ export struct VoiceInputComponent {
   @Local private waveAmplitudes: number[] = [0.3, 0.5, 0.8, 0.4, 0.7, 0.2, 0.9, 0.6];
   @Local private isDarkMode: boolean = false;
   @Local private speechService: SpeechRecognitionService = new SpeechRecognitionService();
+  @Local private isGestureRecording: boolean = false;
+  @Local private isSwipeToCancel: boolean = false;
+  @Local private dragDistance: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   
   // 简化动画状态
@@ -55,6 +75,11 @@ export struct VoiceInputComponent {
   @Local private tipRotationIndex: number = 0;
   private longPressTimer: number = 0;
   private tipRotationTimer: number = 0;
+  private tipAutoHideTimer: number = 0;
+  private touchStartY: number = 0;
+  private isLongPressTriggered: boolean = false;
+  private readonly longPressTriggerMs: number = 220;
+  private readonly swipeCancelThreshold: number = 80;
   private recommendationManager: PromptRecommendationManager = PromptRecommendationManager.getInstance();
   
   async aboutToAppear(): Promise<void> {
@@ -89,6 +114,9 @@ export struct VoiceInputComponent {
     }
     if (this.tipRotationTimer > 0) {
       clearInterval(this.tipRotationTimer);
+    }
+    if (this.tipAutoHideTimer > 0) {
+      clearTimeout(this.tipAutoHideTimer);
     }
     
     // 移除主题监听器
@@ -153,8 +181,6 @@ export struct VoiceInputComponent {
         // 图标内容
         if (this.recognitionState === VoiceRecognitionState.PROCESSING) {
           this.buildProcessingIcon()
-        } else if (this.recognitionState === VoiceRecognitionState.RECORDING) {
-          this.buildRecordingIcon()
         } else {
           this.buildMicrophoneIcon()
         }
@@ -173,28 +199,24 @@ export struct VoiceInputComponent {
         curve: Curve.EaseInOut
       })
       .onClick(() => {
-        this.handleVoiceButtonClick();
+        this.handleVoiceQuickTap();
       })
-      .onTouch((event) => {
-        if (event.type === TouchType.Down) {
-          this.isPressed = true;
-          this.triggerHapticFeedback();
-          
-          // 启动长按检测 (只在空闲状态)
-          if (this.recognitionState === VoiceRecognitionState.IDLE) {
-            this.longPressTimer = setTimeout(() => {
-              this.showVoiceTips = true;
-              this.triggerHapticFeedback();
-            }, 800); // 800ms后显示提示
-          }
-        } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-          this.isPressed = false;
-          
-          // 清除长按定时器
-          if (this.longPressTimer > 0) {
-            clearTimeout(this.longPressTimer);
-            this.longPressTimer = 0;
-          }
+      .onTouch((event: TouchEvent) => {
+        switch (event.type) {
+          case TouchType.Down:
+            this.handleGesturePressDown(event);
+            break;
+          case TouchType.Move:
+            this.handleGestureMove(event);
+            break;
+          case TouchType.Up:
+            this.handleGestureRelease(false);
+            break;
+          case TouchType.Cancel:
+            this.handleGestureRelease(true);
+            break;
+          default:
+            break;
         }
       })
       
@@ -245,17 +267,6 @@ export struct VoiceInputComponent {
   }
   
   @Builder
-  buildRecordingIcon() {
-    // 录音状态 - 显示停止图标
-    Rect()
-      .width(8)
-      .height(8)
-      .radius(1)
-      .fill('#FFFFFF')
-      .opacity(0.9)
-  }
-  
-  @Builder
   buildProcessingIcon() {
     // 处理中动画 - 三个小点
     Row() {
@@ -301,7 +312,6 @@ export struct VoiceInputComponent {
         })
     }
   }
-  
   
   @Builder
   buildStatusIndicator() {
@@ -401,6 +411,137 @@ export struct VoiceInputComponent {
       hilog.warn(0x0000, 'VoiceInputComponent', '触觉反馈失败: %{public}s', JSON.stringify(error));
     }
   }
+
+  private handleVoiceQuickTap(): void {
+    if (this.isGestureRecording || this.recognitionState === VoiceRecognitionState.RECORDING ||
+      this.recognitionState === VoiceRecognitionState.PROCESSING) {
+      return;
+    }
+    this.showQuickUsageHint();
+  }
+
+  private handleGesturePressDown(event: TouchEvent): void {
+    this.isPressed = true;
+    this.dragDistance = 0;
+    this.isSwipeToCancel = false;
+    this.isLongPressTriggered = false;
+    this.touchStartY = this.getTouchPositionY(event);
+    void this.triggerHapticFeedback();
+
+    if (this.recognitionState === VoiceRecognitionState.IDLE) {
+      this.clearLongPressTimer();
+      this.longPressTimer = setTimeout(() => {
+        this.isLongPressTriggered = true;
+        void this.beginGestureRecording();
+      }, this.longPressTriggerMs);
+    }
+  }
+
+  private handleGestureMove(event: TouchEvent): void {
+    if (!this.isPressed) {
+      return;
+    }
+
+    const currentY = this.getTouchPositionY(event);
+    if (currentY <= 0) {
+      return;
+    }
+
+    this.dragDistance = Math.max(0, this.touchStartY - currentY);
+
+    if (!this.isGestureRecording) {
+      return;
+    }
+
+    const shouldCancel = this.dragDistance >= this.swipeCancelThreshold;
+    if (shouldCancel !== this.isSwipeToCancel) {
+      this.isSwipeToCancel = shouldCancel;
+      void this.triggerHapticFeedback();
+    }
+  }
+
+  private handleGestureRelease(forceCancel: boolean): void {
+    const startedRecording = this.isGestureRecording;
+    const shouldCancel = forceCancel || this.isSwipeToCancel;
+
+    this.isPressed = false;
+    this.clearLongPressTimer();
+
+    if (!startedRecording) {
+      if (!this.isLongPressTriggered) {
+        this.showQuickUsageHint();
+      }
+      this.resetGestureState();
+      return;
+    }
+
+    void this.completeGestureRecording(shouldCancel);
+  }
+
+  private async beginGestureRecording(): Promise<void> {
+    if (this.isGestureRecording || this.recognitionState !== VoiceRecognitionState.IDLE) {
+      return;
+    }
+
+    this.clearLongPressTimer();
+    this.isGestureRecording = true;
+    this.isSwipeToCancel = false;
+    this.dragDistance = 0;
+    this.showVoiceTips = false;
+
+    await this.triggerHapticFeedback();
+    await this.startRealSpeechRecognition();
+  }
+
+  private async completeGestureRecording(cancelled: boolean): Promise<void> {
+    try {
+      if (cancelled) {
+        await this.speechService.cancelRecognition();
+      } else {
+        await this.speechService.stopRecognition();
+      }
+    } catch (error) {
+      Logger.error('VoiceInputComponent', `完成语音手势时异常: ${JSON.stringify(error)}`);
+    } finally {
+      this.resetGestureState();
+    }
+  }
+
+  private resetGestureState(): void {
+    this.isGestureRecording = false;
+    this.isSwipeToCancel = false;
+    this.isLongPressTriggered = false;
+    this.dragDistance = 0;
+    this.clearLongPressTimer();
+  }
+
+  private getTouchPositionY(event: TouchEvent): number {
+    const extendedEvent: ExtendedTouchEvent = event as ExtendedTouchEvent;
+    const touch = extendedEvent?.touches?.[0] ?? extendedEvent?.changedTouches?.[0];
+    if (!touch) {
+      return this.touchStartY;
+    }
+    return touch.globalY ?? touch.screenY ?? touch.windowY ?? touch.y ?? this.touchStartY;
+  }
+
+  private clearLongPressTimer(): void {
+    if (this.longPressTimer > 0) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = 0;
+    }
+  }
+
+  private showQuickUsageHint(): void {
+    this.showVoiceTips = true;
+    this.voiceTipText = '按住语音键说话，上滑取消';
+    if (this.tipAutoHideTimer > 0) {
+      clearTimeout(this.tipAutoHideTimer);
+    }
+    this.tipAutoHideTimer = setTimeout(() => {
+      this.showVoiceTips = false;
+      this.tipAutoHideTimer = 0;
+    }, 2000);
+  }
   
   /**
    * 真实语音识别
@@ -427,37 +568,6 @@ export struct VoiceInputComponent {
   }
   
   /**
-   * 处理语音按钮点击
-   */
-  private async handleVoiceButtonClick(): Promise<void> {
-    hilog.info(0x0000, 'VoiceInputComponent', '语音按钮被点击，当前状态: %{public}s', this.recognitionState);
-    
-    switch (this.recognitionState) {
-      case VoiceRecognitionState.IDLE:
-        hilog.info(0x0000, 'VoiceInputComponent', '当前空闲状态，开始语音识别');
-        await this.startRealSpeechRecognition();
-        break;
-      case VoiceRecognitionState.RECORDING:
-        hilog.info(0x0000, 'VoiceInputComponent', '当前录音状态，停止录音');
-        // 停止录音
-        await this.speechService.stopRecognition();
-        break;
-      case VoiceRecognitionState.PROCESSING:
-        hilog.info(0x0000, 'VoiceInputComponent', '当前处理状态，取消识别');
-        // 取消识别
-        await this.speechService.cancelRecognition();
-        break;
-      case VoiceRecognitionState.ERROR:
-        hilog.info(0x0000, 'VoiceInputComponent', '当前错误状态，重置为空闲');
-        this.updateState(VoiceRecognitionState.IDLE);
-        break;
-      default:
-        hilog.warn(0x0000, 'VoiceInputComponent', '未知状态: %{public}s', this.recognitionState);
-        break;
-    }
-  }
-  
-  /**
    * 更新状态
    */
   private updateState(state: VoiceRecognitionState): void {
@@ -473,12 +583,22 @@ export struct VoiceInputComponent {
         this.pulseOpacity = 0.8;
         this.startWaveAnimation();
         hilog.info(0x0000, 'VoiceInputComponent', '启动录音动画');
+        this.isGestureRecording = true;
+        this.isSwipeToCancel = false;
+        this.isLongPressTriggered = false;
+        this.dragDistance = 0;
         break;
       case VoiceRecognitionState.PROCESSING:
         this.animationScale = 1.0;
         this.pulseOpacity = 0.3;
         this.startRotationAnimation();
         hilog.info(0x0000, 'VoiceInputComponent', '启动处理动画');
+        if (!this.isPressed) {
+          this.isGestureRecording = false;
+          this.isSwipeToCancel = false;
+          this.isLongPressTriggered = false;
+          this.dragDistance = 0;
+        }
         break;
       case VoiceRecognitionState.ERROR:
         // 错误状态立即转为空闲状态，不显示错误信息
@@ -486,6 +606,7 @@ export struct VoiceInputComponent {
         this.pulseOpacity = 0.3;
         this.rotationAngle = 0;
         hilog.warn(0x0000, 'VoiceInputComponent', '进入错误状态，自动转为空闲状态');
+        this.resetGestureState();
         // 短暂延迟后转为空闲状态，让用户能感知到状态变化
         setTimeout(() => {
           this.animationScale = 1.0; // 恢复正常大小
@@ -498,6 +619,7 @@ export struct VoiceInputComponent {
         this.pulseOpacity = 0.3;
         this.rotationAngle = 0;
         hilog.info(0x0000, 'VoiceInputComponent', '进入空闲状态');
+        this.resetGestureState();
         break;
     }
   }
@@ -575,8 +697,6 @@ export struct VoiceInputComponent {
    */
   private getButtonBackgroundColor(): string {
     switch (this.recognitionState) {
-      case VoiceRecognitionState.RECORDING:
-        return '#FF4757';  // 录音状态使用红色
       case VoiceRecognitionState.PROCESSING:
         return '#74B9FF';  // 处理状态使用蓝色
       case VoiceRecognitionState.ERROR:
@@ -679,9 +799,7 @@ export struct VoiceInputComponent {
   private getIconSize(): number {
     return 24;
   }
-  
-  
-  
+
   /**
    * 暗色主题 - 获取状态卡片背景
    */

@@ -1305,7 +1305,7 @@ struct ChatPage {
         // 主输入行 - 包含输入框和按钮
         Row() {
           TextArea({ 
-            placeholder: '请输入消息...', 
+            placeholder: this.getInputPlaceholder(), 
             text: this.inputText 
           })
             .layoutWeight(1)
@@ -1315,7 +1315,9 @@ struct ChatPage {
             .padding({ left: 14, right: 14, top: 10, bottom: 10 })
             .border({
               width: 1,
-              color: $r('app.color.border_color')
+              color: this.voiceRecognitionState === VoiceRecognitionState.RECORDING 
+                ? $r('app.color.primary_color') 
+                : $r('app.color.border_color')
             })
             .wordBreak(WordBreak.BREAK_WORD)
             .copyOption(CopyOptions.InApp)
@@ -1390,6 +1392,12 @@ struct ChatPage {
             this.sideDrawerSwipeProgress = 0;
           }
         })
+
+        Text(this.getInputAssistantHint())
+          .fontSize(11)
+          .fontColor($r('app.color.border_color'))
+          .margin({ left: 16, right: 16, bottom: 4 })
+          .opacity(0.9)
         
         // 工具箱面板 - 紧贴在输入区域下方
         if (this.showToolboxPanel) {
@@ -2534,6 +2542,38 @@ struct ChatPage {
     }, 200);
   }
 
+
+  /**
+   * 输入区域提示文案
+   */
+  private getInputPlaceholder(): string {
+    switch (this.voiceRecognitionState) {
+      case VoiceRecognitionState.RECORDING:
+        return '正在语音输入，上滑取消即可...';
+      case VoiceRecognitionState.PROCESSING:
+        return '语音识别中，请稍候...';
+      case VoiceRecognitionState.ERROR:
+        return '语音识别暂不可用，请改用文字输入';
+      default:
+        return '输入文字或按住语音键说话...';
+    }
+  }
+
+  /**
+   * 输入区域提示文案
+   */
+  private getInputAssistantHint(): string {
+    switch (this.voiceRecognitionState) {
+      case VoiceRecognitionState.RECORDING:
+        return '正在语音输入，松开手指发送，上滑取消即可';
+      case VoiceRecognitionState.PROCESSING:
+        return '语音识别中，请稍候...';
+      case VoiceRecognitionState.ERROR:
+        return '语音识别暂不可用，请稍后重试';
+      default:
+        return '提示：按住右侧语音按钮说话，上滑可取消';
+    }
+  }
 
   /**
    * 计算输入区域动态高度
