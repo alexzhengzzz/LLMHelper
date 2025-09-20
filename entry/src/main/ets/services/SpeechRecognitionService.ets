@@ -52,6 +52,7 @@ export class SpeechRecognitionService {
   private engineStartResolve?: (value: boolean) => void; // 引擎启动确认回调
   private isFirstRun: boolean = true; // 是否第一次运行
   private lastRecognitionResult: string = '';
+  private cancelledSessions: Set<string> = new Set();
 
   /**
    * 初始化语音识别器
@@ -127,7 +128,12 @@ export class SpeechRecognitionService {
         // 识别结果回调，包括中间结果和最终结果
         onResult(sessionId: string, result: speechRecognizer.SpeechRecognitionResult) {
           hilog.info(0x0000, 'SpeechRecognitionService', 'onResult回调触发 - sessionId: %{public}s, result: %{public}s', sessionId, JSON.stringify(result));
-          
+
+          if (self.cancelledSessions.has(sessionId)) {
+            hilog.info(0x0000, 'SpeechRecognitionService', '忽略已取消会话的识别结果: %{public}s', sessionId);
+            return;
+          }
+
           if (result && result.result && result.result.trim()) {
             const trimmed = result.result.trim();
             hilog.info(0x0000, 'SpeechRecognitionService', '收到识别结果: %{public}s', trimmed);
@@ -137,7 +143,9 @@ export class SpeechRecognitionService {
         // 识别完成回调
         onComplete(sessionId: string, eventMessage: string) {
           hilog.info(0x0000, 'SpeechRecognitionService', 'onComplete回调触发 - sessionId: %{public}s, eventMessage: %{public}s', sessionId, eventMessage);
-          self.handleRecognitionComplete();
+          self.handleRecognitionComplete(sessionId).catch((error: Error) => {
+            hilog.error(0x0000, 'SpeechRecognitionService', '处理onComplete回调时发生异常: %{public}s', JSON.stringify(error));
+          });
         },
         // 错误回调
         onError(sessionId: string, errorCode: number, errorMessage: string) {
@@ -314,14 +322,20 @@ export class SpeechRecognitionService {
       }
 
       // 取消识别引擎
-      if (this.engine && this.currentSessionId) {
-        await this.engine.cancel(this.currentSessionId);
+      const sessionToCancel = this.currentSessionId;
+      if (sessionToCancel) {
+        this.cancelledSessions.add(sessionToCancel);
+      }
+
+      if (this.engine && sessionToCancel) {
+        await this.engine.cancel(sessionToCancel);
         hilog.info(0x0000, 'SpeechRecognitionService', '语音识别引擎已取消');
       }
 
       // 重置状态
       this.updateState(VoiceRecognitionState.IDLE);
       this.lastRecognitionResult = '';
+      this.currentSessionId = undefined;
 
       const endTime = Date.now();
       hilog.info(0x0000, 'SpeechRecognitionService', '语音识别取消完成，耗时: %{public}d ms', endTime - startTime);
@@ -339,8 +353,8 @@ export class SpeechRecognitionService {
   /**
    * 处理识别完成
    */
-  private async handleRecognitionComplete(): Promise<void> {
-    hilog.info(0x0000, 'SpeechRecognitionService', '处理识别完成');
+  private async handleRecognitionComplete(sessionId: string): Promise<void> {
+    hilog.info(0x0000, 'SpeechRecognitionService', '处理识别完成: %{public}s', sessionId);
     
     try {
       // 停止音频捕获
@@ -352,14 +366,31 @@ export class SpeechRecognitionService {
 
       // 更新状态
       this.updateState(VoiceRecognitionState.IDLE);
-      
+
+      const isCancelledSession = this.cancelledSessions.has(sessionId);
+
+      if (isCancelledSession) {
+        hilog.info(0x0000, 'SpeechRecognitionService', '识别已取消，跳过结果输出: %{public}s', sessionId);
+        this.lastRecognitionResult = '';
+        this.cancelledSessions.delete(sessionId);
+        if (this.currentSessionId === sessionId) {
+          this.currentSessionId = undefined;
+        }
+        hilog.info(0x0000, 'SpeechRecognitionService', '识别完成处理结束 (取消)');
+        return;
+      }
+
       if (this.lastRecognitionResult.trim()) {
         const finalResult = this.lastRecognitionResult.trim();
         hilog.info(0x0000, 'SpeechRecognitionService', '输出最终识别结果: %{public}s', finalResult);
         this.onResult?.(finalResult);
       }
       this.lastRecognitionResult = '';
-      
+      this.cancelledSessions.delete(sessionId);
+      if (this.currentSessionId === sessionId) {
+        this.currentSessionId = undefined;
+      }
+
       hilog.info(0x0000, 'SpeechRecognitionService', '识别完成处理结束');
     } catch (error) {
       const err = error as BusinessError;
