@@ -1706,6 +1706,15 @@ struct ChatPage {
 
     const trimmedResult = text.trim();
 
+    if (!this.isMeaningfulVoiceResult(trimmedResult)) {
+      Logger.warn('ChatPage', `语音识别结果仅包含标点，忽略: ${trimmedResult}`);
+      promptAction.showToast({
+        message: '没听清内容，请再说一遍~',
+        duration: 2000
+      });
+      return;
+    }
+
     if (this.voiceInputMode === InputMode.VOICE) {
       Logger.info('ChatPage', '语音模式下自动发送识别文本');
       await this.sendRecognizedVoiceText(trimmedResult);
@@ -1714,6 +1723,16 @@ struct ChatPage {
 
     this.inputText = trimmedResult;
     Logger.info('ChatPage', '语音识别结果已填入输入框');
+  }
+
+  private isMeaningfulVoiceResult(text: string): boolean {
+    const sanitized = text.replace(/[\s\u3000]/g, '');
+    if (!sanitized) {
+      return false;
+    }
+
+    // 至少包含一个中文、英文字母或数字才认为是有效语句
+    return /[\u4e00-\u9fa5A-Za-z0-9]/.test(sanitized);
   }
 
   /**

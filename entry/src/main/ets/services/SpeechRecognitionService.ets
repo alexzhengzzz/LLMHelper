@@ -7,6 +7,31 @@ import AudioCapturer from './AudioCapturer';
 import { Logger } from '../utils/Logger';
 
 const TAG = "SpeechRecognitionService"
+
+interface EngineExtraParams {
+  locate: string;
+  recognizerMode: string;
+}
+
+interface StartExtraParams {
+  vadBegin: number;
+  vadEnd: number;
+  maxAudioDuration: number;
+}
+
+// 语音识别初始化参数，通过集中定义便于统一调优
+const ENGINE_EXTRA_PARAMS: EngineExtraParams = {
+  locate: 'CN',
+  // 长语音模式对持续发言的容错率更高，能降低截断导致的识别偏差
+  recognizerMode: 'long'
+};
+
+// VAD配置：缩短起止门限，加快响应速度，同时给出充足的发言窗口
+const START_EXTRA_PARAMS: StartExtraParams = {
+  vadBegin: 1200,
+  vadEnd: 1800,
+  maxAudioDuration: 45000
+};
 /**
  * 语音识别服务
  */
@@ -40,11 +65,13 @@ export class SpeechRecognitionService {
       this.context = context;
       hilog.info(0x0000, 'SpeechRecognitionService', '上下文已设置: %{public}s', context ? '有效' : '无效');
 
-      let extraParam: Record<string, Object> = { "locate": "CN", "recognizerMode": "short" };
-      let createEngineParams: speechRecognizer.CreateEngineParams = {
+      const createEngineParams: speechRecognizer.CreateEngineParams = {
         language: 'zh-CN',
         online: 1,
-        extraParams: extraParam
+        extraParams: {
+          locate: ENGINE_EXTRA_PARAMS.locate,
+          recognizerMode: ENGINE_EXTRA_PARAMS.recognizerMode
+        }
       };
       
       hilog.info(0x0000, 'SpeechRecognitionService', '创建引擎参数: %{public}s', JSON.stringify(createEngineParams));
@@ -169,12 +196,20 @@ export class SpeechRecognitionService {
       // 重置音频捕获器状态
       this.isAudioCapturerReleased = false;
 
-      let audioParam: speechRecognizer.AudioInfo = {audioType: 'pcm', sampleRate: 16000, soundChannel: 1, sampleBit: 16};
-      let extraParam: Record<string, Object> = {"vadBegin": 2000, "vadEnd": 3000, "maxAudioDuration": 40000};
-      let recognizerParams: speechRecognizer.StartParams = {
+      const audioParam: speechRecognizer.AudioInfo = {
+        audioType: 'pcm',
+        sampleRate: 16000,
+        soundChannel: 1,
+        sampleBit: 16
+      };
+      const recognizerParams: speechRecognizer.StartParams = {
         sessionId: this.currentSessionId,
         audioInfo: audioParam,
-        extraParams: extraParam
+        extraParams: {
+          vadBegin: START_EXTRA_PARAMS.vadBegin,
+          vadEnd: START_EXTRA_PARAMS.vadEnd,
+          maxAudioDuration: START_EXTRA_PARAMS.maxAudioDuration
+        }
       };
 
       hilog.info(0x0000, 'SpeechRecognitionService', '开始识别参数: %{public}s', JSON.stringify(recognizerParams));
