@@ -7,7 +7,7 @@ import { SystemPromptComponent } from '../components/SystemPromptComponent';
 import { QuickCommandsComponent, QuickCommand } from '../components/QuickCommandsComponent';
 import { SideDrawerComponent } from '../components/SideDrawerComponent';
 import { ToolboxComponent } from '../components/ToolboxComponent';
-import { VoiceInputComponent, VoiceRecognitionState } from '../components/VoiceInputComponent';
+import { VoiceInputComponent, VoiceRecognitionState, InputMode } from '../components/VoiceInputComponent';
 import { SmartTextRenderer } from '../components/SmartTextRenderer';
 import { DeepThinkingDialog } from '../components/DeepThinkingDialog';
 import { SearchDetailsDialog } from '../components/SearchDetailsDialog';
@@ -72,6 +72,7 @@ struct ChatPage {
   
   // 语音识别相关状态
   @Local voiceRecognitionState: VoiceRecognitionState = VoiceRecognitionState.IDLE;
+  @Local voiceInputMode: InputMode = InputMode.TEXT;
   @Local showVoiceInput: boolean = true; // 是否显示语音输入按钮
   @Local sideDrawerSwipeProgress: number = 0; // 侧边栏滑动进度 (0-1)
   @Local isSideDrawerSwipeActive: boolean = false; // 是否正在滑动侧边栏
@@ -120,6 +121,35 @@ struct ChatPage {
     this.aiAvatarType = settings.aiAvatarType;
     this.aiAvatarValue = settings.aiAvatarValue;
     Logger.info('ChatPage', '头像设置已更新');
+  };
+  
+  private readonly handleVoiceComponentResult = (text: string): void => {
+    void this.handleVoiceResult(text);
+  };
+
+  private readonly handleVoiceComponentStateChange = (state: VoiceRecognitionState): void => {
+    this.voiceRecognitionState = state;
+  };
+
+  private readonly handleVoiceComponentModeChange = (mode: InputMode): void => {
+    if (this.voiceInputMode === mode) {
+      return;
+    }
+
+    this.voiceInputMode = mode;
+
+    if (mode === InputMode.VOICE) {
+      try {
+        inputMethod.getController().stopInputSession();
+      } catch (error) {
+        Logger.warn('ChatPage', `停止输入法会话失败: ${JSON.stringify(error)}`);
+      }
+      this.keyboardHeight = 0;
+    }
+  };
+
+  private readonly handleVoiceComponentSmartPrompt = (prompt: string): void => {
+    this.handleSmartPrompt(prompt);
   };
 
   async aboutToAppear(): Promise<void> {
@@ -1304,62 +1334,61 @@ struct ChatPage {
       Column() {
         // 主输入行 - 包含输入框和按钮
         Row() {
-          TextArea({ 
-            placeholder: this.getInputPlaceholder(), 
-            text: this.inputText 
-          })
-            .layoutWeight(1)
-            .height(this.inputAreaHeight)
-            .backgroundColor($r('app.color.input_background'))
-            .borderRadius(18)
-            .padding({ left: 14, right: 14, top: 10, bottom: 10 })
-            .border({
-              width: 1,
-              color: this.voiceRecognitionState === VoiceRecognitionState.RECORDING 
-                ? $r('app.color.primary_color') 
-                : $r('app.color.border_color')
+          if (this.voiceInputMode === InputMode.TEXT) {
+            TextArea({ 
+              placeholder: this.getInputPlaceholder(), 
+              text: this.inputText 
             })
-            .wordBreak(WordBreak.BREAK_WORD)
-            .copyOption(CopyOptions.InApp)
-            .onChange((value: string) => {
-              this.inputText = value;
-              // 动态计算并更新高度
-              const newHeight = this.calculateInputHeight(value);
-              if (this.inputAreaHeight !== newHeight) {
-                this.inputAreaHeight = newHeight;
-              }
-            })
-            .onTouch((event: TouchEvent) => {
-              // 输入框被触摸时，阻止全局关闭输入法
-              this.shouldCloseInputMethod = false;
-            })
-            .onFocus(() => {
-              // 输入框获得焦点时，设置键盘高度模拟值
-              this.keyboardHeight = 300; // 模拟键盘高度
-              Logger.debug('ChatPage', '输入框获得焦点，设置键盘显示状态');
-            })
-            .onBlur(() => {
-              // 输入框失去焦点时，重置键盘高度
-              this.keyboardHeight = 0;
-              Logger.debug('ChatPage', '输入框失去焦点，清除键盘显示状态');
-            })
-          
+              .layoutWeight(1)
+              .height(this.inputAreaHeight)
+              .backgroundColor($r('app.color.input_background'))
+              .borderRadius(18)
+              .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+              .border({
+                width: 1,
+                color: this.voiceRecognitionState === VoiceRecognitionState.RECORDING 
+                  ? $r('app.color.primary_color') 
+                  : $r('app.color.border_color')
+              })
+              .wordBreak(WordBreak.BREAK_WORD)
+              .copyOption(CopyOptions.InApp)
+              .onChange((value: string) => {
+                this.inputText = value;
+                // 动态计算并更新高度
+                const newHeight = this.calculateInputHeight(value);
+                if (this.inputAreaHeight !== newHeight) {
+                  this.inputAreaHeight = newHeight;
+                }
+              })
+              .onTouch((event: TouchEvent) => {
+                // 输入框被触摸时，阻止全局关闭输入法
+                this.shouldCloseInputMethod = false;
+              })
+              .onFocus(() => {
+                // 输入框获得焦点时，设置键盘高度模拟值
+                this.keyboardHeight = 300; // 模拟键盘高度
+                Logger.debug('ChatPage', '输入框获得焦点，设置键盘显示状态');
+              })
+              .onBlur(() => {
+                // 输入框失去焦点时，重置键盘高度
+                this.keyboardHeight = 0;
+                Logger.debug('ChatPage', '输入框失去焦点，清除键盘显示状态');
+              })
+          }
+
           // 语音输入按钮
           if (this.showVoiceInput) {
             VoiceInputComponent({
-              onVoiceResult: (text: string) => {
-                this.handleVoiceResult(text);
-              },
-              onStateChange: (state: VoiceRecognitionState) => {
-                this.voiceRecognitionState = state;
-              },
-              onSmartPromptTriggered: (prompt: string) => {
-                this.handleSmartPrompt(prompt);
-              }
+              onVoiceResult: this.handleVoiceComponentResult,
+              onStateChange: this.handleVoiceComponentStateChange,
+              onSmartPromptTriggered: this.handleVoiceComponentSmartPrompt,
+              onInputModeChange: this.handleVoiceComponentModeChange
             })
-              .margin({ left: 6 })
+              .margin({ left: this.voiceInputMode === InputMode.TEXT ? 6 : 0 })
+              .width(this.voiceInputMode === InputMode.VOICE ? '100%' : 40)
+              .layoutWeight(this.voiceInputMode === InputMode.VOICE ? 1 : 0)
           }
-          
+
           Button() {
             Image($r('app.media.ic_send'))
               .width(18)
@@ -1368,10 +1397,18 @@ struct ChatPage {
           }
           .width(38)
           .height(36)
-          .backgroundColor(this.inputText.trim() ? $r('app.color.primary_color') : $r('app.color.border_color'))
+          .backgroundColor(
+            this.voiceInputMode === InputMode.TEXT && this.inputText.trim()
+              ? $r('app.color.primary_color')
+              : $r('app.color.border_color')
+          )
           .borderRadius(18)
           .margin({ left: 6 })
-          .enabled(this.inputText.trim().length > 0 && !this.chatViewModel.isLoading)
+          .enabled(
+            this.voiceInputMode === InputMode.TEXT &&
+            this.inputText.trim().length > 0 &&
+            !this.chatViewModel.isLoading
+          )
           .animation({
             duration: BasicAnimations.QUICK_DURATION,
             curve: Curve.EaseInOut
@@ -1641,6 +1678,21 @@ struct ChatPage {
     this.scrollToBottom();
   }
 
+  private async sendRecognizedVoiceText(message: string): Promise<void> {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    if (this.chatViewModel.isLoading) {
+      Logger.warn('ChatPage', '助手正在处理中，暂不发送新的语音消息');
+      return;
+    }
+
+    await this.chatViewModel.sendMessage(trimmed, true, this.enableWebSearch, this.enableDeepThinking);
+    this.scrollToBottom();
+  }
+
   /**
    * 处理语音识别结果
    */
@@ -1652,13 +1704,15 @@ struct ChatPage {
       return;
     }
 
-    // 将语音识别结果添加到输入框
-    this.inputText = text.trim();
-    
-    // 可以选择自动发送语音识别的消息
-    // this.sendMessage(true); // true表示这是语音消息
-    
-    // 或者让用户确认后再发送
+    const trimmedResult = text.trim();
+
+    if (this.voiceInputMode === InputMode.VOICE) {
+      Logger.info('ChatPage', '语音模式下自动发送识别文本');
+      await this.sendRecognizedVoiceText(trimmedResult);
+      return;
+    }
+
+    this.inputText = trimmedResult;
     Logger.info('ChatPage', '语音识别结果已填入输入框');
   }
 

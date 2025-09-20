@@ -26,6 +26,7 @@ export class SpeechRecognitionService {
   private isAudioCapturerReleased: boolean = true; // 音频捕获器是否已释放
   private engineStartResolve?: (value: boolean) => void; // 引擎启动确认回调
   private isFirstRun: boolean = true; // 是否第一次运行
+  private lastRecognitionResult: string = '';
 
   /**
    * 初始化语音识别器
@@ -101,8 +102,9 @@ export class SpeechRecognitionService {
           hilog.info(0x0000, 'SpeechRecognitionService', 'onResult回调触发 - sessionId: %{public}s, result: %{public}s', sessionId, JSON.stringify(result));
           
           if (result && result.result && result.result.trim()) {
-            hilog.info(0x0000, 'SpeechRecognitionService', '收到识别结果: %{public}s', result.result);
-            self.onResult?.(result.result);
+            const trimmed = result.result.trim();
+            hilog.info(0x0000, 'SpeechRecognitionService', '收到识别结果: %{public}s', trimmed);
+            self.lastRecognitionResult = trimmed;
           }
         },
         // 识别完成回调
@@ -117,6 +119,7 @@ export class SpeechRecognitionService {
           Logger.error('SpeechRecognitionService', `语音识别错误: ${errorCode} - ${errorMessage}`);
           // 不调用onError回调，避免在UI上显示错误
           // 直接转为空闲状态
+          self.lastRecognitionResult = '';
           self.updateStateWithLogging(VoiceRecognitionState.IDLE, `错误后自动重置: ${errorMessage}`);
         }
       };
@@ -156,6 +159,7 @@ export class SpeechRecognitionService {
       // 更新会话ID
       this.currentSessionId = sessionId || this.generateSessionId();
       this.sessionStartTime = startTime;
+      this.lastRecognitionResult = '';
       
       hilog.info(0x0000, 'SpeechRecognitionService', '会话ID: %{public}s', this.currentSessionId);
 
@@ -282,7 +286,8 @@ export class SpeechRecognitionService {
 
       // 重置状态
       this.updateState(VoiceRecognitionState.IDLE);
-      
+      this.lastRecognitionResult = '';
+
       const endTime = Date.now();
       hilog.info(0x0000, 'SpeechRecognitionService', '语音识别取消完成，耗时: %{public}d ms', endTime - startTime);
       
@@ -312,6 +317,13 @@ export class SpeechRecognitionService {
 
       // 更新状态
       this.updateState(VoiceRecognitionState.IDLE);
+      
+      if (this.lastRecognitionResult.trim()) {
+        const finalResult = this.lastRecognitionResult.trim();
+        hilog.info(0x0000, 'SpeechRecognitionService', '输出最终识别结果: %{public}s', finalResult);
+        this.onResult?.(finalResult);
+      }
+      this.lastRecognitionResult = '';
       
       hilog.info(0x0000, 'SpeechRecognitionService', '识别完成处理结束');
     } catch (error) {
@@ -414,6 +426,7 @@ export class SpeechRecognitionService {
 
       // 重置状态
       this.updateState(VoiceRecognitionState.IDLE);
+      this.lastRecognitionResult = '';
       
       hilog.info(0x0000, 'SpeechRecognitionService', '语音识别器销毁完成');
     } catch (error) {

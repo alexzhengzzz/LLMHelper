@@ -16,6 +16,7 @@ Use this guide when contributing as an autonomous agent to the HarmonyOS Javis c
 - Embrace ArkTS V2 strict typing—no `any`, `unknown`, or bare `ESObject`; surface shared contracts from `types/`.
 - Keep two-space indentation, PascalCase for components/services, camelCase for functions, props, and locals, and respect MVVM boundaries.
 - Use the shared `Logger` instead of `console`, format with `npx prettier --write "**/*.ets"`, and satisfy `code-linter.json5` (TypeScript + security rules).
+- 记得非UI语句不能写到 UI（build函数）里
 
 ## Testing Guidelines
 - Name specs `<Feature>Test.ets`, mock external services, and reuse helpers from `TestUtils.ets` for deterministic runs.

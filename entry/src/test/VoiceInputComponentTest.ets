@@ -1,6 +1,6 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
 import { TestUtils, TestSuiteBase, AsyncTestUtils } from './TestUtils';
-import { VoiceRecognitionState } from '../main/ets/components/VoiceInputComponent';
+import { VoiceRecognitionState, InputMode } from '../main/ets/components/VoiceInputComponent';
 
 /**
  * 语音输入组件测试套件
@@ -43,6 +43,15 @@ export default function voiceInputComponentTest() {
       expect(VoiceRecognitionState.ERROR).assertEqual('error');
       
       TestUtils.log('语音识别状态枚举测试通过');
+    });
+
+    it('should_define_input_modes', 0, () => {
+      TestUtils.log('测试输入模式枚举');
+
+      expect(InputMode.TEXT).assertEqual('text');
+      expect(InputMode.VOICE).assertEqual('voice');
+
+      TestUtils.log('输入模式枚举测试通过');
     });
     
     /**
