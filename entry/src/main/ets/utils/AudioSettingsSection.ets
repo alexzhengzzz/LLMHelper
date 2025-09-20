@@ -189,7 +189,8 @@ export class AudioSettingsSection {
 
       // 同时更新AppStorage和AutoTTSService
       await StorageManager.updateAutoTTSSettings(updates);
-      await this.autoTTSService.updateSettings(updates);
+      const serviceSettings = await this.autoTTSService.updateSettings(updates);
+      this.settings = { ...serviceSettings };
 
       Logger.info('AudioSettingsSection', `音频设置已更新: ${key} = ${value}`);
     } catch (error) {
@@ -314,7 +315,8 @@ export class AudioSettingsSection {
 
       // 同时更新AppStorage和AutoTTSService
       await StorageManager.updateAutoTTSSettings(updates);
-      await this.autoTTSService.updateSettings(updates);
+      const serviceSettings = await this.autoTTSService.updateSettings(updates);
+      this.settings = { ...serviceSettings };
 
       Logger.info('AudioSettingsSection', `音频设置已重置为默认值`);
     } catch (error) {

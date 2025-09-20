@@ -274,6 +274,131 @@ export default function autoTTSServiceTest() {
       TestUtils.log('静音模式测试通过');
     });
 
+    it('should toggle mute state when idle', async () => {
+      TestUtils.log('测试空闲状态下的静音切换');
+
+      const originalSettings = autoTTS.getSettings();
+
+      await autoTTS.updateSettings({muted: false});
+      const afterMute = await autoTTS.toggleMuteState();
+      expect(afterMute.muted).assertTrue();
+
+      const afterUnmute = await autoTTS.toggleMuteState();
+      expect(afterUnmute.muted).assertFalse();
+
+      await autoTTS.updateSettings({muted: originalSettings.muted});
+
+      TestUtils.log('空闲状态静音切换测试通过');
+    });
+
+    it('should force stop playback immediately when mute is enabled', async () => {
+      TestUtils.log('测试静音开启时立即停止当前播报');
+
+      const originalSettings = autoTTS.getSettings();
+      if (originalSettings.muted) {
+        await autoTTS.updateSettings({muted: false});
+      }
+
+      const ttsService = (autoTTS as unknown as {ttsService: TTSService}).ttsService;
+      const originalForceStop = ttsService.forceStop.bind(ttsService);
+      let forceStopCalled = false;
+
+      const mockTask: PlaybackTask = {
+        id: 'mute_force_stop_task',
+        content: '静音测试播报',
+        messageId: 'mute_force_stop_task',
+        priority: 1,
+        timestamp: Date.now(),
+        retryCount: 0
+      };
+
+      // @ts-ignore - 设置私有属性模拟正在播放的状态
+      autoTTS['currentState'] = PlaybackState.PLAYING;
+      // @ts-ignore - 设置私有属性模拟当前任务
+      autoTTS['currentTask'] = mockTask;
+      // @ts-ignore - 设置私有属性模拟队列中存在任务
+      autoTTS['playbackQueue'] = [mockTask];
+      // @ts-ignore - 重置取消标记
+      autoTTS['cancelRequested'] = false;
+
+      ttsService.forceStop = async () => {
+        forceStopCalled = true;
+        return true;
+      };
+
+      try {
+        const result = await autoTTS.toggleMuteState();
+        expect(forceStopCalled).assertTrue();
+        expect(result.muted).assertTrue();
+        expect(autoTTS.getQueueLength()).assertEqual(0);
+        expect(autoTTS.getCurrentTask()).assertNull();
+      } finally {
+        ttsService.forceStop = originalForceStop;
+        await autoTTS.updateSettings({muted: originalSettings.muted});
+        // @ts-ignore - 重置内部状态，避免影响后续测试
+        autoTTS['cancelRequested'] = false;
+        // @ts-ignore - 重置当前状态
+        autoTTS['currentState'] = PlaybackState.IDLE;
+        // @ts-ignore - 清理当前任务引用
+        autoTTS['currentTask'] = null;
+        autoTTS.clearQueue();
+      }
+    });
+
+    it('should reapply force stop when already muted but playback is running', async () => {
+      TestUtils.log('测试在已静音但仍在播放时重新执行立即静音');
+
+      const originalSettings = autoTTS.getSettings();
+      if (!originalSettings.muted) {
+        await autoTTS.updateSettings({muted: true});
+      }
+
+      const ttsService = (autoTTS as unknown as {ttsService: TTSService}).ttsService;
+      const originalForceStop = ttsService.forceStop.bind(ttsService);
+      let forceStopCalled = false;
+
+      const mockTask: PlaybackTask = {
+        id: 'mute_reapply_task',
+        content: '静音重试测试播报',
+        messageId: 'mute_reapply_task',
+        priority: 1,
+        timestamp: Date.now(),
+        retryCount: 0
+      };
+
+      // @ts-ignore - 模拟仍在播放的状态
+      autoTTS['currentState'] = PlaybackState.PLAYING;
+      // @ts-ignore - 模拟当前任务
+      autoTTS['currentTask'] = mockTask;
+      // @ts-ignore - 队列中存在任务
+      autoTTS['playbackQueue'] = [mockTask];
+      // @ts-ignore - 重置取消标记
+      autoTTS['cancelRequested'] = false;
+
+      ttsService.forceStop = async () => {
+        forceStopCalled = true;
+        return true;
+      };
+
+      try {
+        const result = await autoTTS.toggleMuteState();
+        expect(forceStopCalled).assertTrue();
+        expect(result.muted).assertTrue();
+        expect(autoTTS.getQueueLength()).assertEqual(0);
+        expect(autoTTS.getCurrentTask()).assertNull();
+      } finally {
+        ttsService.forceStop = originalForceStop;
+        // @ts-ignore - 重置内部状态
+        autoTTS['cancelRequested'] = false;
+        // @ts-ignore - 重置当前状态
+        autoTTS['currentState'] = PlaybackState.IDLE;
+        // @ts-ignore - 清理当前任务引用
+        autoTTS['currentTask'] = null;
+        autoTTS.clearQueue();
+        await autoTTS.updateSettings({muted: originalSettings.muted});
+      }
+    });
+
     /**
      * 测试队列管理
      */

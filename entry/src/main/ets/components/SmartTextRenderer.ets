@@ -714,7 +714,7 @@ export struct SmartTextRenderer {
    */
   @Builder
   buildRichText(content: string, formats: InlineFormat[], fontSize: number = 16, fontWeight: FontWeight = FontWeight.Normal) {
-    RichText(this.processInlineFormats(content, formats))
+    RichText(this.wrapWithBaseStyle(this.processInlineFormats(content, formats), fontSize, fontWeight))
       .width('100%')
       .layoutWeight(1)
       .onStart(() => {
@@ -730,40 +730,99 @@ export struct SmartTextRenderer {
    */
   private processInlineFormats(content: string, formats: InlineFormat[]): string {
     if (!formats || formats.length === 0) {
-      return content;
+      return this.escapeHtml(content);
     }
-    
+
     let result = '';
     let lastIndex = 0;
-    
+
     for (const format of formats) {
-      // 添加格式前的普通文本
-      result += content.substring(lastIndex, format.start);
-      
-      // 提取格式内容
+      if (format.start > lastIndex) {
+        const plainSegment = content.substring(lastIndex, format.start);
+        result += this.escapeHtml(plainSegment);
+      }
+
       const formatContent = content.substring(format.start, format.end);
-      
-      // 根据格式类型包装内容
+      const strippedContent = this.stripFormatMarkers(formatContent, format.type);
+      const escapedContent = this.escapeHtml(strippedContent);
+
       switch (format.type) {
         case 'bold':
-          // 移除Markdown标记 **text** -> text
-          const boldText = formatContent.replace(/\*\*(.*?)\*\*/g, '$1');
-          result += `<b>${boldText}</b>`;
+          result += `<b>${escapedContent}</b>`;
           break;
         case 'italic':
-          // 移除Markdown标记 *text* -> text
-          const italicText = formatContent.replace(/\*(.*?)\*/g, '$1');
-          result += `<i>${italicText}</i>`;
+          result += `<i>${escapedContent}</i>`;
           break;
       }
-      
+
       lastIndex = format.end;
     }
-    
-    // 添加剩余的普通文本
-    result += content.substring(lastIndex);
-    
+
+    if (lastIndex < content.length) {
+      const tailSegment = content.substring(lastIndex);
+      result += this.escapeHtml(tailSegment);
+    }
+
     return result;
+  }
+
+  /**
+   * 为富文本包裹基础样式，确保不同场景保持一致的字号和行高
+   */
+  private wrapWithBaseStyle(html: string, fontSize: number, fontWeight: FontWeight): string {
+    const cssWeight = this.toCssFontWeight(fontWeight);
+    const lineHeight = Math.round(fontSize * 1.3);
+    return `<span style="display: inline-block; width: 100%; font-size: ${fontSize}px; font-weight: ${cssWeight}; line-height: ${lineHeight}px; color: inherit; white-space: pre-wrap;">${html}</span>`;
+  }
+
+  /**
+   * 去掉Markdown格式标记
+   */
+  private stripFormatMarkers(content: string, type: 'bold' | 'italic'): string {
+    if (!content) {
+      return '';
+    }
+
+    if (type === 'bold' && content.startsWith('**') && content.endsWith('**')) {
+      return content.substring(2, content.length - 2);
+    }
+
+    if (type === 'italic' && content.startsWith('*') && content.endsWith('*')) {
+      return content.substring(1, content.length - 1);
+    }
+
+    return content;
+  }
+
+  /**
+   * 转换字体粗细到CSS可识别的值
+   */
+  private toCssFontWeight(fontWeight: FontWeight): string {
+    switch (fontWeight) {
+      case FontWeight.Bold:
+        return '700';
+      case FontWeight.Medium:
+        return '500';
+      default:
+        return '400';
+    }
+  }
+
+  /**
+   * 转义HTML特殊字符，避免富文本渲染错乱
+   */
+  private escapeHtml(text: string): string {
+    if (!text) {
+      return '';
+    }
+
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/\n/g, '<br/>');
   }
 
   /**

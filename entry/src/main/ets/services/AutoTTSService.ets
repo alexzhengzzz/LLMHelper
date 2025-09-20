@@ -345,7 +345,7 @@ export class AutoTTSService {
   /**
    * 更新播报设置
    */
-  async updateSettings(updates: Partial<AutoTTSSettings>): Promise<void> {
+  async updateSettings(updates: Partial<AutoTTSSettings>): Promise<AutoTTSSettings> {
     try {
       const oldSettings: AutoTTSSettings = {
         muted: this.settings.muted,
@@ -376,15 +376,43 @@ export class AutoTTSService {
       // 触发设置变更回调
       this.callbacks.onSettingsChanged?.(this.settings);
       
-      // 如果开启了静音，立即停止当前播放并清空队列
-      if (this.settings.muted && !oldSettings.muted) {
-        await this.stopPlayback();
-        this.clearQueue();
+      // 如果开启了静音，立即强制停止当前播放并清空队列
+      if (this.settings.muted) {
+        const hasActivePlayback = this.currentTask !== null ||
+          this.playbackQueue.length > 0 ||
+          this.ttsService.isPlaying();
+
+        if (!oldSettings.muted || hasActivePlayback) {
+          await this.forceStopAutoTTS();
+        }
       }
       
+      return this.getSettings();
+
     } catch (error) {
       Logger.error('AutoTTSService', `更新设置失败: ${(error as Error).message}`);
+      return this.getSettings();
     }
+  }
+
+  /**
+   * 判断是否存在活跃的播报流程
+   */
+  hasActivePlayback(): boolean {
+    return this.currentState === PlaybackState.PLAYING ||
+      this.processingQueue ||
+      this.currentTask !== null ||
+      this.playbackQueue.length > 0 ||
+      this.ttsService.isPlaying();
+  }
+
+  /**
+   * 切换静音状态，必要时会重复应用静音以立即停止播报
+   */
+  async toggleMuteState(): Promise<AutoTTSSettings> {
+    const shouldForceMute = this.settings.muted && this.hasActivePlayback();
+    const targetMuted = shouldForceMute ? true : !this.settings.muted;
+    return this.updateSettings({ muted: targetMuted });
   }
 
   /**

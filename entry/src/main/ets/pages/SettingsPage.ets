@@ -983,16 +983,16 @@ struct SettingsPage {
       
       // 同时更新AppStorage和AutoTTSService
       await StorageManager.updateAutoTTSSettings(updates);
-      await this.autoTTSService.updateSettings(updates);
+      const serviceSettings = await this.autoTTSService.updateSettings(updates);
       
       // 更新本地状态
       this.autoTTSSettings = {
-        muted: updates.muted !== undefined ? updates.muted : this.autoTTSSettings.muted,
-        speed: updates.speed !== undefined ? updates.speed : this.autoTTSSettings.speed,
-        volume: updates.volume !== undefined ? updates.volume : this.autoTTSSettings.volume,
-        pitch: updates.pitch !== undefined ? updates.pitch : this.autoTTSSettings.pitch,
-        language: updates.language !== undefined ? updates.language : this.autoTTSSettings.language,
-        autoPlayOnReceive: updates.autoPlayOnReceive !== undefined ? updates.autoPlayOnReceive : this.autoTTSSettings.autoPlayOnReceive
+        muted: serviceSettings.muted,
+        speed: serviceSettings.speed,
+        volume: serviceSettings.volume,
+        pitch: serviceSettings.pitch,
+        language: serviceSettings.language,
+        autoPlayOnReceive: serviceSettings.autoPlayOnReceive
       };
       
       Logger.info('SettingsPage', `自动播报设置已更新: ${key} = ${value}`);

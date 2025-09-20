@@ -7,7 +7,7 @@ import { SystemPromptComponent } from '../components/SystemPromptComponent';
 import { QuickCommandsComponent, QuickCommand } from '../components/QuickCommandsComponent';
 import { SideDrawerComponent } from '../components/SideDrawerComponent';
 import { ToolboxComponent } from '../components/ToolboxComponent';
-import { VoiceInputComponent, VoiceRecognitionState, InputMode } from '../components/VoiceInputComponent';
+import { VoiceInputComponent, VoiceRecognitionState, InputMode, VoiceOverlayHint } from '../components/VoiceInputComponent';
 import { SmartTextRenderer } from '../components/SmartTextRenderer';
 import { DeepThinkingDialog } from '../components/DeepThinkingDialog';
 import { SearchDetailsDialog } from '../components/SearchDetailsDialog';
@@ -18,6 +18,7 @@ import { ThemeManager } from '../utils/ThemeManager';
 import { AvatarSettings, UserProfile, AppStorage as StorageManager } from '../utils/AppStorage';
 import { UserProfileManager } from '../utils/UserProfileManager';
 import { AppConfigManager } from '../utils/AppConfigManager';
+import { AutoTTSService } from '../services/AutoTTSService';
 import { Logger } from '../utils/Logger';
 import { Constants } from '../utils/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -40,6 +41,17 @@ interface ToolboxItem {
   backgroundColor: string;
   enabled: boolean;
   action: () => void | Promise<void>;
+}
+
+/**
+ * 导航图标选项接口
+ */
+interface NavigationIconOptions {
+  active?: boolean;
+  activeColor?: Resource | string;
+  inactiveColor?: Resource | string;
+  activeBorderColor?: Resource | string;
+  inactiveBorderColor?: Resource | string;
 }
 
 /**
@@ -69,11 +81,13 @@ struct ChatPage {
   @Local showToolboxPanel: boolean = false; // 工具箱面板显示状态
   @Local toolboxPanelOpacity: number = 0.0; // 工具箱面板透明度
   @Local toolboxPanelTranslateY: number = 400; // 工具箱面板Y轴位移
+  @Local isMuted: boolean = false; // 自动播报静音状态
   
   // 语音识别相关状态
   @Local voiceRecognitionState: VoiceRecognitionState = VoiceRecognitionState.IDLE;
   @Local voiceInputMode: InputMode = InputMode.TEXT;
   @Local showVoiceInput: boolean = true; // 是否显示语音输入按钮
+  @Local voiceOverlayHint: VoiceOverlayHint | null = null; // 语音提示覆盖层
   @Local sideDrawerSwipeProgress: number = 0; // 侧边栏滑动进度 (0-1)
   @Local isSideDrawerSwipeActive: boolean = false; // 是否正在滑动侧边栏
   @Local isSwipeDebouncing: boolean = false; // 滑动防抖状态
@@ -106,6 +120,7 @@ struct ChatPage {
   private targetSessionId: string = ''; // 目标会话ID（从路由参数获取）
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private userProfileManager: UserProfileManager = UserProfileManager.getInstance();
+  private autoTTSService: AutoTTSService = AutoTTSService.getInstance();
   private listScroller: ListScroller = new ListScroller();
   private lastProvidersReloadTime: number = 0; // 防抖：记录上次providers加载时间
   private forceReloadProviders: boolean = false; // 强制刷新模型列表标记
@@ -152,6 +167,10 @@ struct ChatPage {
     this.handleSmartPrompt(prompt);
   };
 
+  private readonly handleVoiceComponentHintChange = (hint: VoiceOverlayHint | null): void => {
+    this.voiceOverlayHint = hint;
+  };
+
   async aboutToAppear(): Promise<void> {
     Logger.info('ChatPage', 'aboutToAppear 开始');
     
@@ -188,6 +207,19 @@ struct ChatPage {
     });
     
     await this.chatViewModel.loadInitialData();
+
+    try {
+      const autoTTSSettings = this.autoTTSService.getSettings();
+      this.isMuted = autoTTSSettings.muted;
+    } catch (error) {
+      Logger.warn('ChatPage', `获取自动播报静音状态失败: ${error}`);
+    }
+
+    this.autoTTSService.setCallbacks({
+      onSettingsChanged: (settings) => {
+        this.isMuted = settings.muted;
+      }
+    });
     
     // 记录providers加载时间，避免onPageShow时重复加载
     this.lastProvidersReloadTime = Date.now();
@@ -396,6 +428,8 @@ struct ChatPage {
     });
     // 移除头像设置监听器
     StorageManager.removeAvatarListener(this.avatarListener);
+    // 清空自动播报回调，避免重复注册
+    this.autoTTSService.setCallbacks({});
     
     // 移除输入法状态监听器
     this.cleanupInputMethodListener();
@@ -455,6 +489,10 @@ struct ChatPage {
           this.shouldCloseInputMethod = true;
         }
       })
+
+      if (this.voiceOverlayHint) {
+        this.buildVoiceOverlayHint(this.voiceOverlayHint)
+      }
 
       // 模型选择组件
       if (this.showModelSelector) {
@@ -688,6 +726,30 @@ struct ChatPage {
   }
 
   @Builder
+  private buildNavigationIcon(
+    symbol: string,
+    onClick: () => void,
+    options: NavigationIconOptions = {}
+  ) {
+    Button() {
+      Text(symbol)
+        .fontSize(14)
+        .fontColor((options.active ?? false) ?
+          (options.activeColor ?? $r('app.color.primary_color')) :
+          (options.inactiveColor ?? $r('app.color.text_secondary')))
+    }
+    .width(32)
+    .height(32)
+    .backgroundColor(Color.Transparent)
+    .borderWidth(1)
+    .borderColor((options.active ?? false) ?
+      (options.activeBorderColor ?? (options.activeColor ?? $r('app.color.primary_color'))) :
+      (options.inactiveBorderColor ?? $r('app.color.border_color')))
+    .borderRadius(16)
+    .onClick(onClick)
+  }
+
+  @Builder
   buildPromptSelectorButton() {
     Row({ space: 6 }) {
       // 提示词图标
@@ -724,7 +786,47 @@ struct ChatPage {
     .margin({ left: 8 })
   }
 
-  
+
+  @Builder
+  private buildVoiceOverlayHint(hint: VoiceOverlayHint) {
+    Column() {
+      Text(hint.text)
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.getVoiceOverlayTextColor(hint))
+        .textAlign(TextAlign.Center)
+        .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+        .backgroundColor(this.getVoiceOverlayBackgroundColor(hint))
+        .borderRadius(18)
+        .opacity(0.94)
+        .shadow({
+          radius: 8,
+          color: 'rgba(0, 0, 0, 0.25)',
+          offsetY: 4
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .hitTestBehavior(2)
+  }
+
+  private getVoiceOverlayBackgroundColor(hint: VoiceOverlayHint): string {
+    switch (hint.tone) {
+      case 'warning':
+        return 'rgba(255, 77, 79, 0.92)';
+      case 'processing':
+        return this.isDarkMode ? 'rgba(116, 185, 255, 0.9)' : 'rgba(52, 152, 219, 0.9)';
+      default:
+        return this.isDarkMode ? 'rgba(0, 0, 0, 0.85)' : 'rgba(0, 0, 0, 0.72)';
+    }
+  }
+
+  private getVoiceOverlayTextColor(_: VoiceOverlayHint): string {
+    return '#FFFFFF';
+  }
+
   @Builder
   buildLoadingIndicator() {
     Column() {
@@ -744,8 +846,8 @@ struct ChatPage {
 
   @Builder
   buildNavigationBar() {
-    Row() {
-      // 会话列表按钮 - 移到左上角
+    Row({ space: 12 }) {
+      // 左侧：会话抽屉入口
       Button() {
         Text('☰')
           .fontSize(20)
@@ -755,83 +857,50 @@ struct ChatPage {
       .width(32)
       .height(32)
       .backgroundColor(Color.Transparent)
-      .margin({ right: 6 })
       .onClick(() => {
         this.showSideDrawer = true;
       })
-      
-      // 系统提示词选择按钮（已注释）
-      // this.buildPromptSelectorButton() // 暂时隐藏顶部选择器
 
       Blank()
-      //
-      // // 联网搜索按钮
-      // Button() {
-      //   Text(this.enableWebSearch ? '🌐' : '📱')
-      //     .fontSize(14)
-      //     .fontColor(this.enableWebSearch ? '#27AE60' : '#666666')
-      // }
-      // .width(32)
-      // .height(32)
-      // .backgroundColor(Color.Transparent)
-      // .borderWidth(1)
-      // .borderColor(this.enableWebSearch ? '#27AE60' : '#666666')
-      // .borderRadius(16)
-      // .margin({ left: 6 })
-      // .onClick(() => {
-      //   this.toggleWebSearch();
-      // })
 
-      // // 清空会话按钮
-      // Button() {
-      //   Text('🗑️')
-      //     .fontSize(14)
-      //     .fontColor('#FF4757')
-      // }
-      // .width(32)
-      // .height(32)
-      // .backgroundColor(Color.Transparent)
-      // .borderWidth(1)
-      // .borderColor('#FF4757')
-      // .borderRadius(16)
-      // .margin({ left: 6 })
-      // .onClick(() => {
-      //   this.clearMessages();
-      // })
+      // 右侧：功能按钮组
+      Row({ space: 8 }) {
+        this.buildNavigationIcon(this.isMuted ? '🔇' : '🔊', () => {
+          void this.toggleMute();
+        }, {
+          active: this.isMuted,
+          activeColor: $r('app.color.error_color'),
+          inactiveColor: $r('app.color.text_primary')
+        })
 
+        this.buildNavigationIcon('⚙️', () => {
+          router.pushUrl({ url: 'pages/SettingsPage' });
+        })
 
-      // 快捷指令按钮
-      Button() {
-        Text('⚡')
-          .fontSize(14)
-          .fontColor($r('app.color.primary_color'))
-      }
-      .width(32)
-      .height(32)
-      .backgroundColor(Color.Transparent)
-      .borderWidth(1)
-      .borderColor($r('app.color.primary_color'))
-      .borderRadius(16)
-      .margin({ left: 6 })
-      .onClick(() => {
-        // 显示快速指令面板前先关闭工具箱面板
-        if (this.showToolboxPanel) {
-          this.hideToolboxPanel();
+        this.buildNavigationIcon('⚡', () => {
+          if (this.showToolboxPanel) {
+            this.hideToolboxPanel();
+          }
+          this.showQuickCommands = true;
+        }, {
+          active: this.showQuickCommands,
+          activeColor: $r('app.color.primary_color'),
+          inactiveColor: $r('app.color.primary_color'),
+          inactiveBorderColor: $r('app.color.primary_color')
+        })
+
+        Row() {
+          this.buildModelSelectorButton()
         }
-        this.showQuickCommands = true;
-      })
-
-  
-      // 模型选择按钮 - 移到右上角
-      Row() {
-        this.buildModelSelectorButton()
+        .alignItems(VerticalAlign.Center)
       }
-      .margin({ left: 4 })
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
     .height(56)
     .padding({ left: 16, right: 16 })
     .backgroundColor($r('app.color.surface_color'))
+    .alignItems(VerticalAlign.Center)
     .shadow({
       radius: 4,
       color: '#1F000000',
@@ -1382,7 +1451,8 @@ struct ChatPage {
               onVoiceResult: this.handleVoiceComponentResult,
               onStateChange: this.handleVoiceComponentStateChange,
               onSmartPromptTriggered: this.handleVoiceComponentSmartPrompt,
-              onInputModeChange: this.handleVoiceComponentModeChange
+              onInputModeChange: this.handleVoiceComponentModeChange,
+              onHintChange: this.handleVoiceComponentHintChange
             })
               .margin({ left: this.voiceInputMode === InputMode.TEXT ? 6 : 0 })
               .width(this.voiceInputMode === InputMode.VOICE ? '100%' : 40)
@@ -1722,7 +1792,8 @@ struct ChatPage {
     }
 
     this.inputText = trimmedResult;
-    Logger.info('ChatPage', '语音识别结果已填入输入框');
+    this.scrollToBottom();
+    Logger.info('ChatPage', '语音识别结果已填入输入框，并滚动到底部');
   }
 
   private isMeaningfulVoiceResult(text: string): boolean {
@@ -1937,6 +2008,23 @@ struct ChatPage {
     });
   }
 
+  private async toggleMute(): Promise<void> {
+    try {
+      const updatedSettings = await this.autoTTSService.toggleMuteState();
+      this.isMuted = updatedSettings.muted;
+      promptAction.showToast({
+        message: this.isMuted ? '🔇 自动播报已静音' : '🔊 自动播报已恢复',
+        duration: 1500
+      });
+    } catch (error) {
+      Logger.error('ChatPage', `切换静音失败: ${error}`);
+      promptAction.showToast({
+        message: '❗ 静音切换失败，请稍后重试',
+        duration: 1500
+      });
+    }
+  }
+
   private toggleDeepThinking(): void {
     this.enableDeepThinking = !this.enableDeepThinking;
     Logger.info('ChatPage', `深度思考状态切换: ${this.enableDeepThinking}`);
@@ -2038,16 +2126,38 @@ struct ChatPage {
       if (messageCount > 0) {
         // 延迟执行滚动，确保UI渲染完成
         setTimeout(() => {
-          try {
-            this.listScroller.scrollToIndex(messageCount - 1, true, ScrollAlign.END);
-            Logger.info('ChatPage', `自动滚动到最新消息，索引: ${messageCount - 1}`);
-          } catch (scrollError) {
-            Logger.error('ChatPage', `滚动执行失败: ${scrollError}`);
-          }
-        }, 100);
+          this.performScrollToBottom(messageCount - 1, 0);
+        }, 200);
+      } else {
+        // 没有消息时也尝试滚动到底部，确保输入框可见
+        setTimeout(() => {
+          this.performScrollToBottom(0, 0);
+        }, 200);
       }
     } catch (error) {
       Logger.error('ChatPage', `滚动到底部失败: ${error}`);
+    }
+  }
+
+  /**
+   * 执行滚动操作，带重试机制
+   */
+  private performScrollToBottom(targetIndex: number, retryCount: number): void {
+    const maxRetries = 3;
+    try {
+      this.listScroller.scrollToIndex(targetIndex, true, ScrollAlign.END);
+      Logger.info('ChatPage', `自动滚动到索引 ${targetIndex}，重试次数: ${retryCount}`);
+    } catch (scrollError) {
+      Logger.warn('ChatPage', `滚动执行失败: ${scrollError}，重试次数: ${retryCount}`);
+
+      // 如果滚动失败且还有重试次数，则重试
+      if (retryCount < maxRetries) {
+        setTimeout(() => {
+          this.performScrollToBottom(targetIndex, retryCount + 1);
+        }, 100 * (retryCount + 1)); // 递增延迟时间
+      } else {
+        Logger.error('ChatPage', `滚动重试失败，已达到最大重试次数: ${maxRetries}`);
+      }
     }
   }
 
@@ -2424,7 +2534,7 @@ struct ChatPage {
       Logger.info('ChatPage', `工具项被点击: ${item.title}`);
       this.handleToolboxItemClick(item);
     })
-    .hitTestBehavior(HitTestMode.Block)
+    .hitTestBehavior(1)
   }
 
   /**
