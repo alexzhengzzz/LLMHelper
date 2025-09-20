@@ -68,6 +68,8 @@ export class TTSService {
   private isEngineReady: boolean = false;
   private maxRetries: number = 3;
   private retryDelay: number = 1000;
+  private callbacksMap: Map<string, TTSCallbacks> = new Map();
+  private requestCounter: number = 0;
 
   private constructor() {
     Logger.info('TTSService', '创建TTS服务实例');
@@ -121,10 +123,18 @@ export class TTSService {
   /**
    * 初始化TTS引擎
    */
-  async initialize(): Promise<boolean> {
+  async initialize(callbacks?: TTSCallbacks): Promise<boolean> {
+    const effectiveCallbacks: TTSCallbacks = callbacks || {};
+    let requestId: string = '';
+
     try {
       this.currentState = TTSState.INITIALIZING;
       Logger.info('TTSService', '开始初始化华为TTS引擎');
+
+      // 初始化前清理残留状态
+      this.callbacksMap.clear();
+      this.currentRequestId = '';
+      this.callbacks = {};
 
       // 创建TTS引擎配置
       const engineConfig: textToSpeech.CreateEngineParams = {
@@ -168,27 +178,58 @@ export class TTSService {
     this.ttsEngine.setListener({
       // 开始播报回调
       onStart: (requestId: string, response: textToSpeech.StartResponse) => {
+        const callbacks = this.callbacksMap.get(requestId);
+        const isCurrent = requestId === this.currentRequestId;
+
         Logger.info('TTSService', `TTS开始播放 requestId: ${requestId}`);
-        this.currentState = TTSState.PLAYING;
-        this.callbacks.onStart?.();
+
+        if (isCurrent) {
+          this.currentState = TTSState.PLAYING;
+        } else {
+          Logger.debug('TTSService', `收到非当前请求的播放开始回调 requestId: ${requestId}, 当前请求: ${this.currentRequestId || '无'}`);
+        }
+
+        callbacks?.onStart?.();
       },
 
       // 合成完成及播报完成回调
       onComplete: (requestId: string, response: textToSpeech.CompleteResponse) => {
+        const callbacks = this.callbacksMap.get(requestId);
+        const isCurrent = requestId === this.currentRequestId;
+
         Logger.info('TTSService', `TTS播放完成 requestId: ${requestId}`);
-        this.currentState = TTSState.IDLE;
-        this.currentText = '';
-        this.currentRequestId = '';
-        this.callbacks.onComplete?.();
+
+        if (isCurrent) {
+          this.currentState = TTSState.IDLE;
+          this.currentText = '';
+          this.currentRequestId = '';
+          this.callbacks = {};
+        } else {
+          Logger.debug('TTSService', `播放完成回调来自非当前请求 requestId: ${requestId}, 当前请求: ${this.currentRequestId || '无'}`);
+        }
+
+        callbacks?.onComplete?.();
+        this.cleanupRequestResources(requestId);
       },
 
       // 停止播报回调
       onStop: (requestId: string, response: textToSpeech.StopResponse) => {
+        const callbacks = this.callbacksMap.get(requestId);
+        const isCurrent = requestId === this.currentRequestId;
+
         Logger.info('TTSService', `TTS播放停止 requestId: ${requestId}`);
-        this.currentState = TTSState.STOPPED;
-        this.currentText = '';
-        this.currentRequestId = '';
-        this.callbacks.onStop?.();
+
+        if (isCurrent) {
+          this.currentState = TTSState.STOPPED;
+          this.currentText = '';
+          this.currentRequestId = '';
+          this.callbacks = {};
+        } else {
+          Logger.debug('TTSService', `停止回调来自非当前请求 requestId: ${requestId}, 当前请求: ${this.currentRequestId || '无'}`);
+        }
+
+        callbacks?.onStop?.();
+        this.cleanupRequestResources(requestId);
       },
 
       // 返回音频流（可选处理）
@@ -198,10 +239,21 @@ export class TTSService {
 
       // 错误回调
       onError: (requestId: string, errorCode: number, errorMessage: string) => {
+        const callbacks = this.callbacksMap.get(requestId);
+        const isCurrent = requestId === this.currentRequestId;
+
         Logger.error('TTSService', `TTS播放错误 requestId: ${requestId} code: ${errorCode} message: ${errorMessage}`);
-        this.currentState = TTSState.ERROR;
+
+        if (isCurrent) {
+          this.currentState = TTSState.ERROR;
+          this.currentText = '';
+          this.currentRequestId = '';
+          this.callbacks = {};
+        }
+
         const error = new Error(`TTS播放错误: ${errorMessage} (Code: ${errorCode})`);
-        this.callbacks.onError?.(error);
+        callbacks?.onError?.(error);
+        this.cleanupRequestResources(requestId);
       }
     });
   }
@@ -228,6 +280,8 @@ export class TTSService {
       Logger.warn('TTSService', '播放文本为空');
       return false;
     }
+
+    let speakRequestId: string = '';
 
     // 过滤文本，移除不适合语音朗读的字符
     const filteredText = this.filterTextForSpeech(text);
@@ -268,16 +322,16 @@ export class TTSService {
 
     try {
       // 设置回调函数
-      if (callbacks) {
-        this.callbacks = callbacks;
-      }
+      this.callbacks = callbacks || {};
 
       this.currentText = filteredText;
       Logger.info('TTSService', `开始播放过滤后文本: ${filteredText.substring(0, 50)}${filteredText.length > 50 ? '...' : ''} (重试次数: ${retryCount})`);
       Logger.debug('TTSService', `原始文本: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
 
       // 生成唯一的请求ID
-      this.currentRequestId = systemDateTime.getTime().toString();
+      speakRequestId = this.generateRequestId();
+      this.currentRequestId = speakRequestId;
+      this.callbacksMap.set(speakRequestId, callbacks || {});
 
       // 设置TTS播放参数
       const extraParam: Record<string, Object> = {
@@ -289,7 +343,7 @@ export class TTSService {
       };
 
       const speakParams: textToSpeech.SpeakParams = {
-        requestId: this.currentRequestId,
+        requestId: speakRequestId,
         extraParams: extraParam
       };
 
@@ -303,7 +357,17 @@ export class TTSService {
     } catch (error) {
       const err = error as Error;
       Logger.error('TTSService', `播放失败: ${err.message} (重试次数: ${retryCount})`);
-      
+
+      if (speakRequestId) {
+        this.cleanupRequestResources(speakRequestId);
+
+        if (this.currentRequestId === speakRequestId) {
+          this.currentRequestId = '';
+        }
+      }
+
+      this.currentText = '';
+
       // 如果还有重试机会，进行重试
       if (retryCount < this.maxRetries) {
         Logger.info('TTSService', `播放失败，进行第 ${retryCount + 1} 次重试`);
@@ -313,7 +377,8 @@ export class TTSService {
       
       // 达到最大重试次数，设置错误状态
       this.currentState = TTSState.ERROR;
-      this.callbacks.onError?.(err);
+      this.callbacks = {};
+      callbacks?.onError?.(err);
       return false;
     }
   }
@@ -354,18 +419,30 @@ export class TTSService {
     try {
       // 保存当前请求ID用于停止
       const requestToStop = this.currentRequestId;
+      let resolvedRequestId = requestToStop;
+
+      // 如果当前请求ID缺失，但仍存在未清理的回调，尝试兜底处理
+      if (!resolvedRequestId && this.callbacksMap.size === 1) {
+        resolvedRequestId = Array.from(this.callbacksMap.keys())[0];
+        Logger.warn('TTSService', `当前请求ID缺失，使用回退请求ID执行停止: ${resolvedRequestId}`);
+      } else if (!resolvedRequestId && this.callbacksMap.size > 1) {
+        Logger.warn('TTSService', `当前请求ID缺失且存在多个待清理请求，无法唯一映射: ${Array.from(this.callbacksMap.keys()).join(', ')}`);
+      }
+
+      const callbacks = resolvedRequestId ? this.callbacksMap.get(resolvedRequestId) : this.callbacks;
       
       // 立即重置状态，防止新的播放请求
       this.currentState = TTSState.STOPPED;
       this.currentText = '';
       this.currentRequestId = '';
+      this.callbacks = {};
 
       // 如果有引擎且有请求ID，尝试调用停止
-      if (this.ttsEngine && requestToStop) {
+      if (this.ttsEngine) {
         try {
-          Logger.info('TTSService', `调用华为TTS API停止播放，请求ID: ${requestToStop}`);
+          Logger.info('TTSService', `调用华为TTS API停止播放${resolvedRequestId ? `，请求ID: ${resolvedRequestId}` : '（无有效请求ID）'}`);
           this.ttsEngine.stop();
-          
+
           // 等待短暂时间让停止命令生效
           if (!forceMode) {
             await this.delay(100);
@@ -381,16 +458,20 @@ export class TTSService {
           // 强制模式下继续执行
         }
       } else {
-        Logger.warn('TTSService', `${operation}时引擎或请求ID无效 - 引擎: ${this.ttsEngine ? '有效' : '无效'}, 请求ID: ${requestToStop || '无'}`);
+        Logger.warn('TTSService', `${operation}时引擎或请求ID无效 - 引擎: ${this.ttsEngine ? '有效' : '无效'}, 请求ID: ${resolvedRequestId || '无'}`);
       }
 
       // 触发停止回调
-      if (this.callbacks.onStop) {
+      if (callbacks && callbacks.onStop) {
         try {
-          this.callbacks.onStop();
+          callbacks.onStop();
         } catch (callbackError) {
           Logger.error('TTSService', `停止回调执行失败: ${(callbackError as Error).message}`);
         }
+      }
+
+      if (resolvedRequestId) {
+        this.cleanupRequestResources(resolvedRequestId);
       }
 
       Logger.info('TTSService', `${operation}播放完成`);
@@ -556,6 +637,32 @@ export class TTSService {
   }
 
   /**
+   * 清理指定请求的回调和标记
+   */
+  private cleanupRequestResources(requestId: string): void {
+    if (!requestId) {
+      return;
+    }
+
+    if (this.callbacksMap.has(requestId)) {
+      this.callbacksMap.delete(requestId);
+    }
+
+    if (this.callbacksMap.size === 0 && !this.currentRequestId) {
+      this.callbacks = {};
+    }
+  }
+
+  /**
+   * 生成唯一请求ID
+   */
+  private generateRequestId(): string {
+    this.requestCounter = (this.requestCounter + 1) % 100000;
+    const timestamp = systemDateTime.getTime();
+    return `${timestamp}-${this.requestCounter}`;
+  }
+
+  /**
    * 重新初始化TTS引擎（当配置更改时）
    */
   private async reinitializeEngine(): Promise<void> {
@@ -652,7 +759,11 @@ export class TTSService {
       this.currentState = TTSState.IDLE;
       this.currentText = '';
       this.currentRequestId = '';
+      this.callbacksMap.clear();
       this.callbacks = {};
+
+      // 重新计数请求ID，避免溢出
+      this.requestCounter = 0;
       
       Logger.info('TTSService', '华为TTS服务已销毁');
     } catch (error) {

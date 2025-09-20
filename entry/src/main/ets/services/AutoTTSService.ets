@@ -50,6 +50,7 @@ export class AutoTTSService {
   private isInitialized: boolean = false;
   private processingQueue: boolean = false;
   private maxRetries: number = 2;
+  private cancelRequested: boolean = false;
 
   private constructor() {
     this.ttsService = TTSService.getInstance();
@@ -138,6 +139,7 @@ export class AutoTTSService {
       this.currentState = PlaybackState.STOPPED;
       this.currentTask = null;
       this.processingQueue = false;
+      this.cancelRequested = true;
       
       Logger.info('AutoTTSService', 'TTS播放强制停止完成');
       return true;
@@ -148,6 +150,7 @@ export class AutoTTSService {
       this.currentState = PlaybackState.STOPPED;
       this.currentTask = null;
       this.processingQueue = false;
+      this.cancelRequested = true;
       return false;
     }
   }
@@ -164,6 +167,7 @@ export class AutoTTSService {
       
       // 清空队列
       this.clearQueue();
+      this.cancelRequested = true;
       
       Logger.info('AutoTTSService', 'AutoTTS服务强制停止完成');
       return true;
@@ -175,6 +179,7 @@ export class AutoTTSService {
       this.currentTask = null;
       this.processingQueue = false;
       this.playbackQueue = [];
+      this.cancelRequested = true;
       return false;
     }
   }
@@ -271,6 +276,7 @@ export class AutoTTSService {
       this.currentState = PlaybackState.STOPPED;
       this.currentTask = null;
       this.processingQueue = false;
+      this.cancelRequested = true;
       
     } catch (error) {
       Logger.error('AutoTTSService', `停止播报失败: ${(error as Error).message}`);
@@ -313,6 +319,7 @@ export class AutoTTSService {
   clearQueue(): void {
     Logger.info('AutoTTSService', `清空播报队列，清除 ${this.playbackQueue.length} 个任务`);
     this.playbackQueue = [];
+    this.cancelRequested = true;
   }
 
   /**
@@ -505,12 +512,29 @@ export class AutoTTSService {
       return;
     }
 
+    let cancelledDuringProcessing = false;
     this.processingQueue = true;
-    
+    this.cancelRequested = false;
+
     try {
       while (this.playbackQueue.length > 0) {
+        if (this.cancelRequested) {
+          cancelledDuringProcessing = true;
+          Logger.info('AutoTTSService', '检测到取消请求，提前终止队列处理');
+          break;
+        }
+
         const task = this.playbackQueue.shift();
-        if (!task) continue;
+        if (!task) {
+          continue;
+        }
+
+        if (this.cancelRequested) {
+          cancelledDuringProcessing = true;
+          Logger.info('AutoTTSService', `取消请求在任务 ${task.id} 开始前触发，将任务放回队列`);
+          this.playbackQueue.unshift(task);
+          break;
+        }
 
         // 如果静音，只处理高优先级任务（手动播放任务）
         if (this.settings.muted && task.priority < 10) {
@@ -537,8 +561,7 @@ export class AutoTTSService {
           },
           onError: (error: Error) => {
             Logger.error('AutoTTSService', `任务播报失败: ${task.id}, 错误: ${error.message}`);
-            
-            // 重试逻辑
+
             if (task.retryCount < this.maxRetries) {
               task.retryCount++;
               Logger.info('AutoTTSService', `重试播报任务: ${task.id}, 第 ${task.retryCount} 次重试`);
@@ -547,7 +570,7 @@ export class AutoTTSService {
               Logger.error('AutoTTSService', `任务播报最终失败: ${task.id}`);
               this.callbacks.onTaskError?.(task, error);
             }
-            
+
             this.currentTask = null;
             this.currentState = PlaybackState.IDLE;
           },
@@ -558,30 +581,40 @@ export class AutoTTSService {
           }
         };
 
-        // 执行播报
         const success = await this.ttsService.speak(task.content, ttsCallbacks);
         if (!success) {
-          // 如果立即失败，触发错误处理
           ttsCallbacks.onError?.(new Error('TTS播放启动失败'));
         } else {
-          // 等待播放完成
           await this.waitForTaskCompletion();
         }
 
-        // 检查是否需要停止处理队列（静音时停止）
+        if (this.cancelRequested) {
+          cancelledDuringProcessing = true;
+          Logger.info('AutoTTSService', '取消请求在任务完成后触发，停止继续处理队列');
+          break;
+        }
+
         if (this.settings.muted) {
           break;
         }
       }
 
-      // 队列处理完成
-      if (this.playbackQueue.length === 0) {
+      if (!cancelledDuringProcessing && this.playbackQueue.length === 0) {
         Logger.info('AutoTTSService', '播报队列已空');
         this.callbacks.onQueueEmpty?.();
       }
 
     } finally {
       this.processingQueue = false;
+
+      if (cancelledDuringProcessing) {
+        this.currentTask = null;
+        if (this.currentState === PlaybackState.PLAYING) {
+          this.currentState = PlaybackState.STOPPED;
+        }
+      }
+
+      this.cancelRequested = false;
     }
   }
 
@@ -590,19 +623,33 @@ export class AutoTTSService {
    */
   private async waitForTaskCompletion(): Promise<void> {
     return new Promise((resolve) => {
-      const checkInterval = setInterval(() => {
-        if (this.currentState === PlaybackState.IDLE || 
+      let resolved = false;
+      let intervalId: number = 0;
+      let timeoutId: number = 0;
+
+      const safeResolve = () => {
+        if (resolved) {
+          return;
+        }
+        resolved = true;
+        clearInterval(intervalId);
+        clearTimeout(timeoutId);
+        resolve();
+      };
+
+      intervalId = setInterval(() => {
+        if (this.cancelRequested ||
+            this.currentState === PlaybackState.IDLE ||
             this.currentState === PlaybackState.STOPPED ||
             this.currentTask === null) {
-          clearInterval(checkInterval);
-          resolve();
+          safeResolve();
         }
       }, 100);
-      
+
       // 设置超时，避免永久等待
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        resolve();
+      timeoutId = setTimeout(() => {
+        Logger.warn('AutoTTSService', '等待任务完成超时，强制结束等待');
+        safeResolve();
       }, 30000); // 30秒超时
     });
   }
@@ -623,6 +670,7 @@ export class AutoTTSService {
       this.currentState = PlaybackState.IDLE;
       this.callbacks = {};
       this.isInitialized = false;
+      this.cancelRequested = false;
       
     } catch (error) {
       Logger.error('AutoTTSService', `销毁服务失败: ${(error as Error).message}`);
