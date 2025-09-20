@@ -865,7 +865,7 @@ struct ChatPage {
 
       // 右侧：功能按钮组
       Row({ space: 8 }) {
-        this.buildNavigationIcon(this.isMuted ? '🔇' : '🔊', () => {
+        this.buildNavigationIcon(this.isMuted ? '🤫' : '🗣️', () => {
           void this.toggleMute();
         }, {
           active: this.isMuted,
@@ -1499,12 +1499,6 @@ struct ChatPage {
             this.sideDrawerSwipeProgress = 0;
           }
         })
-
-        Text(this.getInputAssistantHint())
-          .fontSize(11)
-          .fontColor($r('app.color.border_color'))
-          .margin({ left: 16, right: 16, bottom: 4 })
-          .opacity(0.9)
         
         // 工具箱面板 - 紧贴在输入区域下方
         if (this.showToolboxPanel) {
@@ -1742,10 +1736,22 @@ struct ChatPage {
       Logger.error('ChatPage', `关闭输入法失败: ${error}`);
     }
 
-    await this.chatViewModel.sendMessage(message, isVoiceMessage, this.enableWebSearch, this.enableDeepThinking);
-    
-    // 发送消息后自动滚动到最新消息
+    const sendPromise = this.chatViewModel.sendMessage(
+      message,
+      isVoiceMessage,
+      this.enableWebSearch,
+      this.enableDeepThinking
+    );
+
+    // 先滚动让新消息立即可见，再等待处理完成
     this.scrollToBottom();
+
+    try {
+      await sendPromise;
+    } finally {
+      // 助手回复完成后再次确保停留在底部
+      this.scrollToBottom();
+    }
   }
 
   private async sendRecognizedVoiceText(message: string): Promise<void> {
@@ -1759,8 +1765,20 @@ struct ChatPage {
       return;
     }
 
-    await this.chatViewModel.sendMessage(trimmed, true, this.enableWebSearch, this.enableDeepThinking);
+    const sendPromise = this.chatViewModel.sendMessage(
+      trimmed,
+      true,
+      this.enableWebSearch,
+      this.enableDeepThinking
+    );
+
     this.scrollToBottom();
+
+    try {
+      await sendPromise;
+    } finally {
+      this.scrollToBottom();
+    }
   }
 
   /**
@@ -2013,7 +2031,7 @@ struct ChatPage {
       const updatedSettings = await this.autoTTSService.toggleMuteState();
       this.isMuted = updatedSettings.muted;
       promptAction.showToast({
-        message: this.isMuted ? '🔇 自动播报已静音' : '🔊 自动播报已恢复',
+        message: this.isMuted ? '🤫 自动播报已静音' : '🗣️ 自动播报已恢复',
         duration: 1500
       });
     } catch (error) {
@@ -2739,22 +2757,6 @@ struct ChatPage {
         return '语音识别暂不可用，请改用文字输入';
       default:
         return '输入文字或按住语音键说话...';
-    }
-  }
-
-  /**
-   * 输入区域提示文案
-   */
-  private getInputAssistantHint(): string {
-    switch (this.voiceRecognitionState) {
-      case VoiceRecognitionState.RECORDING:
-        return '正在语音输入，松开手指发送，上滑取消即可';
-      case VoiceRecognitionState.PROCESSING:
-        return '语音识别中，请稍候...';
-      case VoiceRecognitionState.ERROR:
-        return '语音识别暂不可用，请稍后重试';
-      default:
-        return '提示：按住右侧语音按钮说话，上滑可取消';
     }
   }
 

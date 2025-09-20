@@ -343,7 +343,7 @@ export struct VoiceInputComponent {
         .width(18)
         .height(5)
         .borderRadius(2)
-        .fill(this.getIconColor())
+        .fill(this.getKeyboardIconColor())
 
       Row({ space: 2 }) {
         ForEach([0, 1, 2, 3], (index: number) => {
@@ -351,7 +351,7 @@ export struct VoiceInputComponent {
             .width(3)
             .height(3)
             .borderRadius(1.5)
-            .fill(this.getIconColor())
+            .fill(this.getKeyboardIconColor())
             .key(`key-${index}`)
         })
       }
@@ -360,7 +360,7 @@ export struct VoiceInputComponent {
         .width(18)
         .height(4)
         .borderRadius(2)
-        .fill(this.getIconColor())
+        .fill(this.getKeyboardIconColor())
     }
   }
 
@@ -391,6 +391,10 @@ export struct VoiceInputComponent {
 
   private getKeyboardButtonBackground(): string {
     return this.isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#F7F9FC';
+  }
+
+  private getKeyboardIconColor(): string {
+    return this.isDarkMode ? 'rgba(255, 255, 255, 0.95)' : '#1F2937';
   }
 
   private getVoiceHoldButtonHeight(): number {
@@ -429,7 +433,7 @@ export struct VoiceInputComponent {
       return '松开手指取消发送';
     }
     if (this.isGestureRecording) {
-      return '松开 发送';
+      return '';
     }
     return '按住 说话';
   }
