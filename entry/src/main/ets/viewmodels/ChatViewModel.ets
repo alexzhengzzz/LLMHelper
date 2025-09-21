@@ -354,7 +354,12 @@ export class ChatViewModel {
       const hybridResponse = await this.hybridChatService.sendHybridChatRequest(hybridRequest);
 
       assistantMessage.content = hybridResponse.response.choices[0]?.message?.content || '未收到有效响应';
-      
+
+      // 同步工具调用状态
+      if (hybridResponse.response.tool_status) {
+        assistantMessage.toolStatus = hybridResponse.response.tool_status;
+      }
+
       if (hybridResponse.searchUsed && hybridResponse.searchInfo) {
         assistantMessage.webUsed = true;
         assistantMessage.searchInfo = this.formatSearchInfoSimple(hybridResponse.searchInfo);
@@ -395,7 +400,12 @@ export class ChatViewModel {
 
       const apiResponse = await this.apiManager.sendChatRequest(apiRequest);
       assistantMessage.content = apiResponse.choices[0]?.message?.content || '未收到有效响应';
-      
+
+      // 同步工具调用状态
+      if (apiResponse.tool_status) {
+        assistantMessage.toolStatus = apiResponse.tool_status;
+      }
+
       if (apiResponse.web_used) {
         assistantMessage.webUsed = true;
         assistantMessage.searchInfo = apiResponse.search_info || '🌐 已使用网络搜索';

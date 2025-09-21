@@ -12,6 +12,7 @@ import { SmartTextRenderer } from '../components/SmartTextRenderer';
 import { DeepThinkingDialog } from '../components/DeepThinkingDialog';
 import { SearchDetailsDialog } from '../components/SearchDetailsDialog';
 import { DeepThinkingStatusCard } from '../components/DeepThinkingStatusCard';
+import { ToolCallStatusComponent } from '../components/ToolCallStatusComponent';
 import { ToolType } from '../types/ToolboxTypes';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { ThemeManager } from '../utils/ThemeManager';
@@ -1293,57 +1294,16 @@ struct ChatPage {
                 this.buildLoadingStatus('🔍 正在搜索网络信息...', true)
               } else {
                 Column() {
+                  // 工具调用状态展示
+                  ToolCallStatusComponent({
+                    message: message,
+                    onSearchDetailsClick: (searchDetails: string) => {
+                      this.showSearchInfoBubble(searchDetails);
+                    }
+                  })
+
                   // 智能渲染的消息内容
                   SmartTextRenderer({ content: message.content.trim() })
-                  
-                  // 网络搜索标识
-                  if (message.webUsed && message.searchInfo) {
-                    Row() {
-                      Row() {
-                        Text('🔍')
-                          .fontSize(12)
-                          .animation({
-                            duration: message.toolStatus === 'calling' ? 1000 : 0,
-                            curve: Curve.EaseInOut,
-                            iterations: message.toolStatus === 'calling' ? -1 : 1,
-                            playMode: PlayMode.Alternate
-                          })
-                        Text('网络搜索')
-                          .fontSize(12)
-                          .fontWeight(FontWeight.Medium)
-                          .fontColor($r('app.color.primary_color'))
-                      }
-                      .padding({ right: 8 })
-                      
-                      // 截断显示搜索信息
-                      Text(this.truncateSearchInfo(message.searchInfo ?? ''))
-                        .fontSize(12)
-                        .fontColor($r('app.color.text_secondary'))
-                        .maxLines(1)
-                        .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    }
-                    .margin({ top: 8 })
-                    .padding({ top: 6, bottom: 6, left: 12, right: 12 })
-                    .clip(true)
-                    .backgroundColor($r('app.color.card_background'))
-                    .borderRadius(16)
-                    .border({
-                      width: 1,
-                      color: $r('app.color.primary_color')
-                    })
-                    .onClick((event) => {
-                      // 点击搜索标识显示详细信息气泡
-                      Logger.info('ChatPage', `第二个搜索标识被点击，searchDetails存在: ${!!message.searchDetails}, 长度: ${message.searchDetails?.length || 0}`);
-                      
-                      if (message.searchDetails) {
-                        Logger.info('ChatPage', '使用searchDetails显示详细搜索信息');
-                        this.showSearchInfoBubble(message.searchDetails);
-                      } else if (message.searchInfo) {
-                        Logger.info('ChatPage', 'searchDetails为空，使用searchInfo显示简化信息');
-                        this.showSearchInfoBubble(message.searchInfo);
-                      }
-                    })
-                  }
                 }
               }
             }
