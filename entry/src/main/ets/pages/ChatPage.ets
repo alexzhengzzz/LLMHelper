@@ -75,6 +75,14 @@ struct ChatPage {
   @Local showModelSelector: boolean = false;
   // @Local showPromptSelector: boolean = false; // 已注释：不再使用顶部选择器
   @Local showQuickCommands: boolean = false;
+
+  // 消息变化检测相关状态
+  @Local messages: Message[] = [];
+  @Local lastMessageCount: number = 0;
+  @Local lastAssistantMessageContent: string = '';
+
+  // 消息变化检测定时器
+  private messageChangeTimer: number = -1;
   @Local isDarkMode: boolean = false;
   @Local isImmersiveMode: boolean = false;
   @Local showSideDrawer: boolean = false;
@@ -233,7 +241,7 @@ struct ChatPage {
         this.isMuted = settings.muted;
       }
     });
-    
+
     // 记录providers加载时间，避免onPageShow时重复加载
     this.lastProvidersReloadTime = Date.now();
     Logger.info('ChatPage', `初始化完成，providers加载时间已记录: ${this.lastProvidersReloadTime}`);
@@ -257,7 +265,10 @@ struct ChatPage {
     
     // 初始加载完成后滚动到最新消息
     this.scrollToBottom();
-    
+
+    // 同步消息列表到本地副本，用于监听变化
+    this.messages = [...this.chatViewModel.messages];
+
     // 初始化用户资料管理器
     try {
       await this.userProfileManager.initialize();
@@ -340,6 +351,21 @@ struct ChatPage {
     if (this.chatViewModel.systemPrompts.length > 0) {
       // 系统提示词列表详情仅在调试时输出
     }
+
+    // 初始化消息变化检测状态
+    this.lastMessageCount = this.chatViewModel.messages.length;
+    this.messages = [...this.chatViewModel.messages];
+
+    // 初始化最后一条助手消息内容
+    if (this.chatViewModel.messages.length > 0) {
+      const lastMessage = this.chatViewModel.messages[this.chatViewModel.messages.length - 1];
+      if (lastMessage.role === MessageRole.ASSISTANT) {
+        this.lastAssistantMessageContent = lastMessage.content;
+      }
+    }
+
+    // 启动消息变化检测定时器
+    this.startMessageChangeTimer();
   }
 
   async onPageShow(): Promise<void> {
@@ -478,6 +504,9 @@ struct ChatPage {
     
     // 移除输入法状态监听器
     this.cleanupInputMethodListener();
+
+    // 停止消息变化检测定时器
+    this.stopMessageChangeTimer();
   }
 
   onBackPress(): boolean | void {
@@ -1442,10 +1471,6 @@ struct ChatPage {
           Row({ space: 6 }) {
             Text('🧰')
               .fontSize(14)
-            Text('工具')
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.primary_color'))
           }
           .justifyContent(FlexAlign.Center)
           .alignItems(VerticalAlign.Center)
@@ -2217,6 +2242,73 @@ struct ChatPage {
         message: '复制失败',
         duration: 1500
       });
+    }
+  }
+
+  /**
+   * 启动消息变化检测定时器
+   */
+  private startMessageChangeTimer(): void {
+    // 清除现有定时器
+    this.stopMessageChangeTimer();
+
+    // 每500ms检查一次消息变化
+    this.messageChangeTimer = setInterval(() => {
+      this.checkMessageChangesAndScroll();
+    }, 500);
+
+    Logger.info('ChatPage', '消息变化检测定时器已启动');
+  }
+
+  /**
+   * 停止消息变化检测定时器
+   */
+  private stopMessageChangeTimer(): void {
+    if (this.messageChangeTimer !== -1) {
+      clearInterval(this.messageChangeTimer);
+      this.messageChangeTimer = -1;
+      Logger.info('ChatPage', '消息变化检测定时器已停止');
+    }
+  }
+
+  /**
+   * 检查消息变化并自动滚动
+   */
+  private checkMessageChangesAndScroll(): void {
+    try {
+      const currentMessages = this.chatViewModel.messages;
+
+      // 检查消息数量是否增加
+      if (currentMessages.length > this.lastMessageCount) {
+        this.lastMessageCount = currentMessages.length;
+        this.messages = [...currentMessages];
+
+        // 新消息添加，滚动到底部
+        setTimeout(() => {
+          this.scrollToBottom();
+        }, 100);
+        return;
+      }
+
+      // 检查最后一条助手消息内容是否有更新
+      if (currentMessages.length > 0) {
+        const lastMessage = currentMessages[currentMessages.length - 1];
+
+        if (lastMessage.role === MessageRole.ASSISTANT &&
+            lastMessage.content !== this.lastAssistantMessageContent &&
+            lastMessage.content.trim().length > 0) {
+
+          this.lastAssistantMessageContent = lastMessage.content;
+          this.messages = [...currentMessages];
+
+          // 助手消息内容更新，滚动到底部
+          setTimeout(() => {
+            this.scrollToBottom();
+          }, 100);
+        }
+      }
+    } catch (error) {
+      Logger.error('ChatPage', `检测消息变化失败: ${error}`);
     }
   }
 

@@ -334,9 +334,9 @@ export class ChatViewModel {
         max_tokens: 1000,
         temperature: 0.7
       };
-      
+  
       const hybridResponse = await this.hybridChatService.sendHybridChatRequest(hybridRequest);
-      
+
       assistantMessage.content = hybridResponse.response.choices[0]?.message?.content || '未收到有效响应';
       
       if (hybridResponse.searchUsed && hybridResponse.searchInfo) {
@@ -811,7 +811,7 @@ export class ChatViewModel {
         
         errorManager.handleError(appError);
       }
-      
+  
       const errorMessage = (error as Error).message || '未知错误';
       assistantMessage.content = `发送消息失败: ${errorMessage}`;
     } finally {
