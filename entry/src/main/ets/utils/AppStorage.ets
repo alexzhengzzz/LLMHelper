@@ -14,6 +14,7 @@ const SELECTED_SYSTEM_PROMPT_KEY = 'selected_system_prompt_id';
 const MESSAGE_LAYOUT_KEY = 'message_layout_preference';
 const API_KEYS_KEY = 'api_keys_config';
 const CURRENT_MODEL_KEY = 'current_model_config'; // 当前选择的模型配置
+const FONT_SETTINGS_KEY = 'font_settings'; // 字体设置
 
 // 会话管理相关存储键
 const SESSIONS_KEY = 'chat_sessions';
@@ -38,6 +39,16 @@ export interface ModelConfig {
   provider: string;      // 厂商名称
   model: string;         // 模型名称
   savedAt: number;       // 保存时间戳
+}
+
+/**
+ * 字体设置接口
+ */
+export interface FontSettings {
+  chatFontSize: number;      // 聊天字体大小 (12-20px)
+  codeFontSize: number;      // 代码字体大小 (10-18px)
+  fontFamily: 'system' | 'serif' | 'monospace' | 'rounded' | 'elegant' | 'playful' | 'modern' | 'classic'; // 字体家族
+  updatedAt: number;         // 最后更新时间
 }
 
 /**
@@ -1222,5 +1233,150 @@ export class AppStorage {
       Logger.error('AppStorage', `Failed to check model config expiration: ${e}`);
       return false;
     }
+  }
+
+  //=================== 字体设置相关方法 ===================
+
+  /**
+   * 获取字体设置
+   */
+  static async getFontSettings(): Promise<FontSettings> {
+    try {
+      const storage = AppStorage.getStorage();
+      const fontSettingsStr = await storage.get(FONT_SETTINGS_KEY, '');
+
+      if (fontSettingsStr && typeof fontSettingsStr === 'string') {
+        const settings = JSON.parse(fontSettingsStr) as FontSettings;
+        Logger.debug('AppStorage', `字体设置加载成功: ${JSON.stringify(settings)}`);
+        return settings;
+      } else {
+        Logger.info('AppStorage', '未找到字体设置，返回默认值');
+        return AppStorage.getDefaultFontSettings();
+      }
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to get font settings: ${e}`);
+      return AppStorage.getDefaultFontSettings();
+    }
+  }
+
+  /**
+   * 保存字体设置
+   */
+  static async saveFontSettings(settings: FontSettings): Promise<void> {
+    try {
+      // 验证设置值的有效性
+      const validatedSettings = AppStorage.validateFontSettings(settings);
+
+      const storage = AppStorage.getStorage();
+      await storage.put(FONT_SETTINGS_KEY, JSON.stringify(validatedSettings));
+      await storage.flush();
+
+      Logger.info('AppStorage', `字体设置已保存: ${JSON.stringify(validatedSettings)}`);
+
+      // 通知监听器
+      AppStorage.notifyFontSettingsListeners(validatedSettings);
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to save font settings: ${e}`);
+      throw new Error(`Failed to save font settings: ${e}`);
+    }
+  }
+
+  /**
+   * 更新字体设置（部分更新）
+   */
+  static async updateFontSettings(updates: Partial<FontSettings>): Promise<FontSettings> {
+    try {
+      const currentSettings = await AppStorage.getFontSettings();
+      const newSettings: FontSettings = {
+        chatFontSize: updates.chatFontSize !== undefined ? updates.chatFontSize : currentSettings.chatFontSize,
+        codeFontSize: updates.codeFontSize !== undefined ? updates.codeFontSize : currentSettings.codeFontSize,
+        fontFamily: updates.fontFamily !== undefined ? updates.fontFamily : currentSettings.fontFamily,
+        updatedAt: Date.now()
+      };
+
+      await AppStorage.saveFontSettings(newSettings);
+      return newSettings;
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to update font settings: ${e}`);
+      throw new Error(`Failed to update font settings: ${e}`);
+    }
+  }
+
+  /**
+   * 获取默认字体设置
+   */
+  static getDefaultFontSettings(): FontSettings {
+    return {
+      chatFontSize: 16,        // 默认聊天字体大小
+      codeFontSize: 14,        // 默认代码字体大小
+      fontFamily: 'system',    // 默认系统字体
+      updatedAt: Date.now()
+    };
+  }
+
+  /**
+   * 验证字体设置的有效性
+   */
+  private static validateFontSettings(settings: FontSettings): FontSettings {
+    const validFontFamilies: Array<'system' | 'serif' | 'monospace' | 'rounded' | 'elegant' | 'playful' | 'modern' | 'classic'> = ['system', 'serif', 'monospace', 'rounded', 'elegant', 'playful', 'modern', 'classic'];
+    const fontFamily = validFontFamilies.includes(settings.fontFamily) ? settings.fontFamily : 'system';
+
+    return {
+      chatFontSize: Math.max(12, Math.min(20, settings.chatFontSize || 16)),
+      codeFontSize: Math.max(10, Math.min(18, settings.codeFontSize || 14)),
+      fontFamily: fontFamily,
+      updatedAt: settings.updatedAt || Date.now()
+    };
+  }
+
+  /**
+   * 重置字体设置为默认值
+   */
+  static async resetFontSettings(): Promise<void> {
+    try {
+      const defaultSettings = AppStorage.getDefaultFontSettings();
+      await AppStorage.saveFontSettings(defaultSettings);
+      Logger.info('AppStorage', '字体设置已重置为默认值');
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to reset font settings: ${e}`);
+      throw new Error(`Failed to reset font settings: ${e}`);
+    }
+  }
+
+  //=================== 字体设置监听器相关方法 ===================
+
+  private static fontSettingsListeners: ((settings: FontSettings) => void)[] = [];
+
+  /**
+   * 添加字体设置变更监听器
+   */
+  static addFontSettingsListener(listener: (settings: FontSettings) => void): void {
+    AppStorage.fontSettingsListeners.push(listener);
+    Logger.debug('AppStorage', `添加字体设置监听器，当前监听器数量: ${AppStorage.fontSettingsListeners.length}`);
+  }
+
+  /**
+   * 移除字体设置变更监听器
+   */
+  static removeFontSettingsListener(listener: (settings: FontSettings) => void): void {
+    const index = AppStorage.fontSettingsListeners.indexOf(listener);
+    if (index > -1) {
+      AppStorage.fontSettingsListeners.splice(index, 1);
+      Logger.debug('AppStorage', `移除字体设置监听器，当前监听器数量: ${AppStorage.fontSettingsListeners.length}`);
+    }
+  }
+
+  /**
+   * 通知所有字体设置监听器
+   */
+  private static notifyFontSettingsListeners(settings: FontSettings): void {
+    Logger.debug('AppStorage', `通知 ${AppStorage.fontSettingsListeners.length} 个字体设置监听器`);
+    AppStorage.fontSettingsListeners.forEach(listener => {
+      try {
+        listener(settings);
+      } catch (e) {
+        Logger.error('AppStorage', `字体设置监听器执行失败: ${e}`);
+      }
+    });
   }
 }

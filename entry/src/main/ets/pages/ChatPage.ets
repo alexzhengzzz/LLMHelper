@@ -15,6 +15,8 @@ import { DeepThinkingIndicator } from '../components/DeepThinkingIndicator';
 import { ToolType } from '../types/ToolboxTypes';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { ThemeManager } from '../utils/ThemeManager';
+import { FontManager } from '../utils/FontManager';
+import { FontSettings } from '../utils/AppStorage';
 import { AvatarSettings, UserProfile, AppStorage as StorageManager } from '../utils/AppStorage';
 import { UserProfileManager } from '../utils/UserProfileManager';
 import { AppConfigManager } from '../utils/AppConfigManager';
@@ -95,6 +97,12 @@ struct ChatPage {
   @Local swipeDirection: 'left' | 'right' | 'none' = 'none'; // 当前滑动方向
   @Local isSessionItemSwiping: boolean = false; // 会话项是否正在滑动
   @Local useModernMessageLayout: boolean = false; // 现代消息布局开关
+  @Local fontSettings: FontSettings = {
+    chatFontSize: 16,
+    codeFontSize: 14,
+    fontFamily: 'system',
+    updatedAt: Date.now()
+  };
   @Local userAvatarType: 'default' | 'emoji' | 'image' = 'default';
   @Local userAvatarValue: string = '#4285F4';
   @Local aiAvatarType: 'default' | 'emoji' | 'image' = 'default';
@@ -119,6 +127,7 @@ struct ChatPage {
   private shouldCloseInputMethod: boolean = true;
   private targetSessionId: string = ''; // 目标会话ID（从路由参数获取）
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  private fontManager: FontManager = FontManager.getInstance();
   private userProfileManager: UserProfileManager = UserProfileManager.getInstance();
   private autoTTSService: AutoTTSService = AutoTTSService.getInstance();
   private listScroller: ListScroller = new ListScroller();
@@ -136,6 +145,10 @@ struct ChatPage {
     this.aiAvatarType = settings.aiAvatarType;
     this.aiAvatarValue = settings.aiAvatarValue;
     Logger.info('ChatPage', '头像设置已更新');
+  };
+  private fontSettingsListener: (settings: FontSettings) => void = (settings: FontSettings) => {
+    this.fontSettings = settings;
+    Logger.info('ChatPage', `字体设置已更新: ${JSON.stringify(settings)}`);
   };
   
   private readonly handleVoiceComponentResult = (text: string): void => {
@@ -283,7 +296,16 @@ struct ChatPage {
     } catch (error) {
       Logger.error('ChatPage', `加载消息布局偏好失败: ${error}`);
     }
-    
+
+    // 初始化字体管理器并加载字体设置
+    try {
+      await this.fontManager.initialize();
+      this.fontSettings = this.fontManager.getFontSettings();
+      Logger.info('ChatPage', `字体设置加载成功: ${JSON.stringify(this.fontSettings)}`);
+    } catch (error) {
+      Logger.error('ChatPage', `初始化字体管理器失败: ${error}`);
+    }
+
     // 获取动态状态栏高度
     const storedHeight = AppStorage.get<number>('statusBarHeight');
     if (storedHeight && storedHeight > 0) {
@@ -303,7 +325,10 @@ struct ChatPage {
     
     // 添加头像设置监听器
     StorageManager.addAvatarListener(this.avatarListener);
-    
+
+    // 添加字体设置监听器
+    this.fontManager.addListener(this.fontSettingsListener);
+
     // 添加输入法状态监听器
     this.setupInputMethodListener();
     
@@ -374,6 +399,24 @@ struct ChatPage {
       Logger.error('ChatPage', `重新加载头像设置失败: ${error}`);
     }
 
+    // 重新加载字体设置，确保从设置页面返回后字体设置是最新的
+    try {
+      Logger.info('ChatPage', '页面显示，重新加载字体设置');
+      const previousFontSettings = this.fontSettings;
+      this.fontSettings = this.fontManager.getFontSettings();
+
+      // 检查字体设置是否有变化
+      if (previousFontSettings.chatFontSize !== this.fontSettings.chatFontSize ||
+          previousFontSettings.codeFontSize !== this.fontSettings.codeFontSize ||
+          previousFontSettings.fontFamily !== this.fontSettings.fontFamily) {
+        Logger.info('ChatPage', `字体设置已更新: ${JSON.stringify(this.fontSettings)}`);
+      } else {
+        Logger.debug('ChatPage', '字体设置未变更');
+      }
+    } catch (error) {
+      Logger.error('ChatPage', `重新加载字体设置失败: ${error}`);
+    }
+
     // 页面显示时检查模型配置是否过期，清理过期配置
     try {
       const isExpired = await StorageManager.isModelConfigExpired();
@@ -428,6 +471,8 @@ struct ChatPage {
     });
     // 移除头像设置监听器
     StorageManager.removeAvatarListener(this.avatarListener);
+    // 移除字体设置监听器
+    this.fontManager.removeListener(this.fontSettingsListener);
     // 清空自动播报回调，避免重复注册
     this.autoTTSService.setCallbacks({});
     
@@ -952,7 +997,7 @@ struct ChatPage {
         
         Column() {
           Text(message.content.trim())
-            .fontSize(16)
+            .fontSize(this.fontSettings.chatFontSize)
             .fontColor(Color.White)
             .textAlign(TextAlign.Start)
             .maxLines(100)
@@ -1036,7 +1081,7 @@ struct ChatPage {
                   
                   // 消息内容
                   Text(message.content.trim())
-                    .fontSize(16)
+                    .fontSize(this.fontSettings.chatFontSize)
                     .fontColor($r('app.color.text_primary'))
                     .textAlign(TextAlign.Start)
                     .maxLines(100)
@@ -1181,7 +1226,7 @@ struct ChatPage {
             Blank()
             
             Text(message.content.trim())
-              .fontSize(16)
+              .fontSize(this.fontSettings.chatFontSize)
               .fontColor($r('app.color.text_primary'))
               .textAlign(TextAlign.Start)
               .maxLines(100)

@@ -8,6 +8,8 @@ import { Logger } from '../utils/Logger';
 import { AppConfigManager } from '../utils/AppConfigManager';
 import { ServerConfigManager, ServerEndpoint } from '../utils/ServerConfigManager';
 import { ThemeManager } from '../utils/ThemeManager';
+import { FontManager } from '../utils/FontManager';
+import { FontSettings } from '../utils/AppStorage';
 import { BasicAnimations, AnimationConfigManager } from '../animations';
 import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -76,6 +78,12 @@ struct SettingsPage {
     protocol: 'http',
     wsProtocol: 'ws'
   };
+  @Local fontSettings: FontSettings = {
+    chatFontSize: 16,
+    codeFontSize: 14,
+    fontFamily: 'system',
+    updatedAt: Date.now()
+  };
   private readonly PAGE_ENTER_OFFSET: number = 96;
   @Local private pageTranslateX: number = this.PAGE_ENTER_OFFSET;
   @Local private pageOpacity: number = BasicAnimations.HIDDEN_OPACITY;
@@ -86,6 +94,7 @@ struct SettingsPage {
   private userProfileManager: UserProfileManager = UserProfileManager.getInstance();
   private serverConfigManager: ServerConfigManager = ServerConfigManager.getInstance();
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  private fontManager: FontManager = FontManager.getInstance();
   private avatarListener: (settings: AvatarSettings) => void = (settings: AvatarSettings) => {
     // 更新本地状态，@Computed会自动处理后续更新
     this.aiAvatarType = settings.aiAvatarType;
@@ -100,15 +109,22 @@ struct SettingsPage {
   private serverConfigListener: (config: ServerEndpoint) => void = (config: ServerEndpoint) => {
     // 更新本地服务器配置状态
     Logger.info('SettingsPage', `收到服务器配置变更通知: ${config.protocol}://${config.ip}:${config.port}`);
-    
+
     // 更新各个属性以确保响应性
     this.currentServer.ip = config.ip;
     this.currentServer.port = config.port;
     this.currentServer.protocol = config.protocol;
     this.currentServer.wsProtocol = config.wsProtocol;
     this.currentServer.description = config.description;
-    
+
     Logger.info('SettingsPage', `服务器配置已更新为: ${this.currentServer.protocol}://${this.currentServer.ip}:${this.currentServer.port}`);
+  };
+  private fontSettingsListener: (settings: FontSettings) => void = (settings: FontSettings) => {
+    // 更新本地字体设置状态
+    Logger.info('SettingsPage', `收到字体设置变更通知: ${JSON.stringify(settings)}`);
+    Logger.info('SettingsPage', `当前字体设置: ${JSON.stringify(this.fontSettings)}`);
+    this.fontSettings = settings;
+    Logger.info('SettingsPage', `更新后字体设置: ${JSON.stringify(this.fontSettings)}`);
   };
 
   async aboutToAppear(): Promise<void> {
@@ -191,10 +207,20 @@ struct SettingsPage {
     
     // 添加服务器配置变更监听器
     this.serverConfigManager.addConfigChangeListener(this.serverConfigListener);
-    
+
+    // 初始化字体管理器
+    try {
+      await this.fontManager.initialize();
+      this.fontSettings = this.fontManager.getFontSettings();
+      this.fontManager.addListener(this.fontSettingsListener);
+      Logger.info('SettingsPage', `字体设置初始化完成: ${JSON.stringify(this.fontSettings)}`);
+    } catch (error) {
+      Logger.error('SettingsPage', `初始化字体设置失败: ${error}`);
+    }
+
     // 暂时使用固定状态栏高度，后续动态获取
     Logger.info('SettingsPage', '使用固定状态栏高度44vp');
-    
+
     // 设置初始化完成标记，避免初始化过程中触发onChange事件
     this.isInitialized = true;
     Logger.info('SettingsPage', '页面初始化完成');
@@ -243,12 +269,15 @@ struct SettingsPage {
   aboutToDisappear(): void {
     // 移除用户资料监听器
     this.userProfileManager.removeProfileListener(this.userProfileListener);
-    
+
     // 移除头像设置监听器
     StorageManager.removeAvatarListener(this.avatarListener);
-    
+
     // 移除服务器配置变更监听器
     this.serverConfigManager.removeConfigChangeListener(this.serverConfigListener);
+
+    // 移除字体设置监听器
+    this.fontManager.removeListener(this.fontSettingsListener);
   }
 
   onBackPress(): boolean | void {
@@ -388,6 +417,34 @@ struct SettingsPage {
     ];
   }
 
+  private getFontSettings(): SettingItem[] {
+    return [
+      {
+        title: '聊天字体大小',
+        subtitle: '', // 将由 getDynamicSubtitle 动态生成
+        type: 'slider',
+        numValue: this.fontSettings.chatFontSize,
+        minValue: 12,
+        maxValue: 20,
+        step: 1
+      },
+      {
+        title: '代码字体大小',
+        subtitle: '', // 将由 getDynamicSubtitle 动态生成
+        type: 'slider',
+        numValue: this.fontSettings.codeFontSize,
+        minValue: 10,
+        maxValue: 18,
+        step: 1
+      },
+      {
+        title: '字体家族',
+        subtitle: '', // 将由 getDynamicSubtitle 动态生成
+        type: 'info'
+      }
+    ];
+  }
+
   private getAboutSettings(): SettingItem[] {
     const configManager = AppConfigManager.getInstance();
     const privacyConfig = configManager.getPrivacyConfig();
@@ -419,21 +476,35 @@ struct SettingsPage {
   }
 
   build() {
-    Column() {
-      // 顶部导航栏 - 添加状态栏高度避让
+    Stack() {
       Column() {
-        this.buildNavigationBar()
-      }
-      .margin({ top: this.statusBarHeight })
+        // 顶部导航栏 - 添加状态栏高度避让
+        Column() {
+          this.buildNavigationBar()
+        }
+        .margin({ top: this.statusBarHeight })
 
-      // 设置选项列表
-      this.buildSettingsList()
+        // 设置选项列表
+        this.buildSettingsList()
+      }
+      .translate({ x: this.pageTranslateX, y: 0 })
+      .opacity(this.pageOpacity)
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.background_color'))
+
+      // 字体家族选择对话框
+      if (this.showFontFamilyDialog) {
+        this.FontFamilySelectionDialog()
+      }
+
+      // 服务器输入对话框
+      if (this.showServerInputDialog) {
+        this.ServerInputDialog()
+      }
     }
-    .translate({ x: this.pageTranslateX, y: 0 })
-    .opacity(this.pageOpacity)
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.background_color'))
   }
 
   @Builder
@@ -484,6 +555,9 @@ struct SettingsPage {
 
         // 语音播报设置
         this.buildSettingsGroup('语音播报', this.getVoiceSettings(), 'voice')
+
+        // 字体设置
+        this.buildSettingsGroup('字体设置', this.getFontSettings(), 'font')
 
         // 应用设置
         this.buildSettingsGroup('应用设置', this.getAppSettings(), 'app')
@@ -596,6 +670,10 @@ struct SettingsPage {
                   await this.updateAutoTTSSetting('volume', value);
                 } else if (item.title === '音调高低') {
                   await this.updateAutoTTSSetting('pitch', value);
+                } else if (item.title === '聊天字体大小') {
+                  await this.updateChatFontSize(value);
+                } else if (item.title === '代码字体大小') {
+                  await this.updateCodeFontSize(value);
                 }
               })
           }
@@ -619,6 +697,8 @@ struct SettingsPage {
           this.showAvatarSelectionDialog(item.title);
         } else if (item.type === 'button') {
           this.handleButtonClick(item.title);
+        } else if (item.title === '字体家族') {
+          this.showFontFamilyDialog = true;
         }
       })
 
@@ -638,6 +718,9 @@ struct SettingsPage {
   @Local serverInputPort: string = '';
   @Local serverInputProtocol: 'http' | 'https' = 'http';
   @Local serverInputError: string = '';
+
+  // 字体家族选择对话框状态
+  @Local showFontFamilyDialog: boolean = false;
   
   
   private showServerUrlDialog(): void {
@@ -1069,6 +1152,12 @@ struct SettingsPage {
         return `当前: ${Math.round(this.autoTTSSettings.volume * 100)}%`;
       } else if (item.title === '音调高低') {
         return `当前: ${this.autoTTSSettings.pitch.toFixed(1)}`;
+      } else if (item.title === '聊天字体大小') {
+        return `当前: ${this.fontSettings.chatFontSize}px`;
+      } else if (item.title === '代码字体大小') {
+        return `当前: ${this.fontSettings.codeFontSize}px`;
+      } else if (item.title === '字体家族') {
+        return `当前: ${FontManager.getFontFamilyDisplayText(this.fontSettings.fontFamily)}`;
       }
     }
     return item.subtitle || '';
@@ -1265,6 +1354,47 @@ struct SettingsPage {
    * 处理消息布局样式切换
    */
 
+  //=================== 字体设置相关方法 ===================
+
+  /**
+   * 更新聊天字体大小
+   */
+  private async updateChatFontSize(size: number): Promise<void> {
+    try {
+      await this.fontManager.updateChatFontSize(size);
+      Logger.info('SettingsPage', `聊天字体大小已更新: ${size}px`);
+    } catch (error) {
+      Logger.error('SettingsPage', `更新聊天字体大小失败: ${error}`);
+    }
+  }
+
+  /**
+   * 更新代码字体大小
+   */
+  private async updateCodeFontSize(size: number): Promise<void> {
+    try {
+      await this.fontManager.updateCodeFontSize(size);
+      Logger.info('SettingsPage', `代码字体大小已更新: ${size}px`);
+    } catch (error) {
+      Logger.error('SettingsPage', `更新代码字体大小失败: ${error}`);
+    }
+  }
+
+  /**
+   * 更新字体家族
+   */
+  private async updateFontFamily(family: 'system' | 'serif' | 'monospace' | 'rounded' | 'elegant' | 'playful' | 'modern' | 'classic'): Promise<void> {
+    try {
+      Logger.info('SettingsPage', `开始更新字体家族: ${family}`);
+      Logger.info('SettingsPage', `更新前字体设置: ${JSON.stringify(this.fontSettings)}`);
+      await this.fontManager.updateFontFamily(family);
+      Logger.info('SettingsPage', `字体家族已更新: ${family}`);
+      Logger.info('SettingsPage', `更新后字体设置: ${JSON.stringify(this.fontSettings)}`);
+    } catch (error) {
+      Logger.error('SettingsPage', `更新字体家族失败: ${error}`);
+    }
+  }
+
   // 服务器地址输入对话框
   @Builder
   ServerInputDialog() {
@@ -1414,5 +1544,122 @@ struct SettingsPage {
     .padding(24)
     .backgroundColor($r('app.color.surface_color'))
     .borderRadius(16)
+  }
+
+  // 字体家族选择对话框
+  @Builder
+  FontFamilySelectionDialog() {
+    Column() {
+      // 背景遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0, 0, 0, 0.5)')
+        .onClick(() => {
+          this.showFontFamilyDialog = false;
+        })
+
+      // 对话框内容
+      Column() {
+        Text('选择字体家族')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .margin({ bottom: 20 })
+
+        // 字体选项列表
+        Column() {
+          this.buildFontFamilyOption('system', '系统默认', 'system-ui, -apple-system, "PingFang SC"')
+          Divider().color($r('app.color.border_color')).margin({ top: 1, bottom: 1 })
+
+          this.buildFontFamilyOption('modern', '现代字体', '"SF Pro Display", "Roboto", "Noto Sans CJK SC"')
+          Divider().color($r('app.color.border_color')).margin({ top: 1, bottom: 1 })
+
+          this.buildFontFamilyOption('elegant', '优雅字体', '"Optima", "Avenir Next", "PingFang SC"')
+          Divider().color($r('app.color.border_color')).margin({ top: 1, bottom: 1 })
+
+          this.buildFontFamilyOption('rounded', '圆润字体', '"SF Pro Rounded", "PingFang SC"')
+          Divider().color($r('app.color.border_color')).margin({ top: 1, bottom: 1 })
+
+          this.buildFontFamilyOption('serif', '衬线字体', 'Georgia, "Times New Roman", "Songti SC"')
+          Divider().color($r('app.color.border_color')).margin({ top: 1, bottom: 1 })
+
+          this.buildFontFamilyOption('classic', '经典字体', '"Palatino", "Book Antiqua", "Times New Roman"')
+          Divider().color($r('app.color.border_color')).margin({ top: 1, bottom: 1 })
+
+          this.buildFontFamilyOption('monospace', '等宽字体', 'Monaco, Consolas, "SF Mono"')
+          Divider().color($r('app.color.border_color')).margin({ top: 1, bottom: 1 })
+
+          this.buildFontFamilyOption('playful', '活泼字体', '"Comic Sans MS", "Marker Felt"')
+        }
+        .backgroundColor($r('app.color.surface_color'))
+        .borderRadius(12)
+        .padding({ top: 8, bottom: 8 })
+
+        // 取消按钮
+        Button('取消')
+          .fontSize(16)
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('app.color.text_secondary'))
+          .borderWidth(1)
+          .borderColor($r('app.color.border_color'))
+          .borderRadius(8)
+          .width('100%')
+          .height(44)
+          .margin({ top: 16 })
+          .onClick(() => {
+            this.showFontFamilyDialog = false;
+          })
+      }
+      .width('80%')
+      .padding(20)
+      .backgroundColor($r('app.color.surface_color'))
+      .borderRadius(16)
+      .position({ x: '50%', y: '50%' })
+      .translate({ x: '-50%', y: '-50%' })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  buildFontFamilyOption(
+    family: 'system' | 'serif' | 'monospace' | 'rounded' | 'elegant' | 'playful' | 'modern' | 'classic',
+    displayName: string,
+    previewText: string
+  ) {
+    Row() {
+      Column({ space: 4 }) {
+        Text(displayName)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .alignSelf(ItemAlign.Start)
+
+        Text(previewText)
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .alignSelf(ItemAlign.Start)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      // 选中标识
+      if (this.fontSettings.fontFamily === family) {
+        Text('✓')
+          .fontSize(18)
+          .fontColor($r('app.color.primary_color'))
+      }
+    }
+    .width('100%')
+    .height(64)
+    .padding({ left: 16, right: 16 })
+    .alignItems(VerticalAlign.Center)
+    .onClick(async () => {
+      await this.updateFontFamily(family);
+      this.showFontFamilyDialog = false;
+    })
   }
 }

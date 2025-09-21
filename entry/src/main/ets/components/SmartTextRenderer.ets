@@ -3,6 +3,8 @@
  * 支持AI助手消息的结构化显示，包括段落分离、代码块检测等
  */
 import { Logger } from '../utils/Logger';
+import { FontManager } from '../utils/FontManager';
+import { FontSettings } from '../utils/AppStorage';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { promptAction } from '@kit.ArkUI';
 import { ThinkingStep, ThinkingStatus } from '../models/ChatModels';
@@ -405,8 +407,27 @@ export struct SmartTextRenderer {
   @Param thinkingStatus?: ThinkingStatus = ThinkingStatus.IDLE;
   @Local textBlocks: TextBlock[] = [];
   @Local contentHash: string = '';
+  @Local fontSettings: FontSettings = {
+    chatFontSize: 16,
+    codeFontSize: 14,
+    fontFamily: 'system',
+    updatedAt: Date.now()
+  };
+  private fontManager: FontManager = FontManager.getInstance();
+  private fontSettingsListener: (settings: FontSettings) => void = (settings: FontSettings) => {
+    this.fontSettings = settings;
+  };
   
-  aboutToAppear(): void {
+  async aboutToAppear(): Promise<void> {
+    // 初始化字体管理器
+    try {
+      await this.fontManager.initialize();
+      this.fontSettings = this.fontManager.getFontSettings();
+      this.fontManager.addListener(this.fontSettingsListener);
+    } catch (error) {
+      Logger.error(TAG, `初始化字体设置失败: ${error}`);
+    }
+
     this.updateTextBlocks();
   }
   
@@ -414,6 +435,9 @@ export struct SmartTextRenderer {
     // 清理缓存，避免内存泄漏
     this.textBlocks = [];
     this.contentHash = '';
+
+    // 移除字体设置监听器
+    this.fontManager.removeListener(this.fontSettingsListener);
   }
   
   /**
@@ -516,16 +540,18 @@ export struct SmartTextRenderer {
    * 获取标题样式
    */
   private getHeadingStyle(level: number): HeadingStyle {
+    // 基于级别和聊天字体大小返回不同的样式
+    const baseFontSize = this.fontSettings.chatFontSize;
     switch (level) {
       case 1:
-        return {fontSize: 20, fontWeight: FontWeight.Bold, marginTop: 8, marginBottom: 4} as HeadingStyle;
+        return {fontSize: baseFontSize + 4, fontWeight: FontWeight.Bold, marginTop: 8, marginBottom: 4} as HeadingStyle;
       case 2:
-        return {fontSize: 18, fontWeight: FontWeight.Bold, marginTop: 6, marginBottom: 3} as HeadingStyle;
+        return {fontSize: baseFontSize + 2, fontWeight: FontWeight.Bold, marginTop: 6, marginBottom: 3} as HeadingStyle;
       case 3:
-        return {fontSize: 17, fontWeight: FontWeight.Medium, marginTop: 4, marginBottom: 2} as HeadingStyle;
+        return {fontSize: baseFontSize + 1, fontWeight: FontWeight.Medium, marginTop: 4, marginBottom: 2} as HeadingStyle;
       case 4:
       default:
-        return {fontSize: 16, fontWeight: FontWeight.Medium, marginTop: 2, marginBottom: 1} as HeadingStyle;
+        return {fontSize: baseFontSize, fontWeight: FontWeight.Medium, marginTop: 2, marginBottom: 1} as HeadingStyle;
     }
   }
 
@@ -543,6 +569,7 @@ export struct SmartTextRenderer {
           .fontSize(fontSize)
           .fontWeight(fontWeight)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.fontManager.getFontFamilyCss())
           .textAlign(TextAlign.Start)
           .copyOption(CopyOptions.LocalDevice)
           .wordBreak(WordBreak.BREAK_WORD)
@@ -579,17 +606,17 @@ export struct SmartTextRenderer {
       // 语言标签（如果有）
       if (block.language && block.language.length > 0) {
         Text(block.language)
-          .fontSize(12)
+          .fontSize(Math.max(10, this.fontSettings.codeFontSize - 2))
           .fontColor($r('app.color.text_secondary'))
-          .fontFamily('Monaco, Consolas, monospace')
+          .fontFamily(this.fontManager.getFontFamilyCss())
           .margin({ left: 8, bottom: 2 })
       }
-      
+
       // 代码内容
       Text(block.content)
-        .fontSize(14)
+        .fontSize(this.fontSettings.codeFontSize)
         .fontColor($r('app.color.text_primary'))
-        .fontFamily('Monaco, Consolas, monospace')
+        .fontFamily(this.fontManager.getFontFamilyCss())
         .textAlign(TextAlign.Start)
         .copyOption(CopyOptions.LocalDevice)
         .wordBreak(WordBreak.BREAK_WORD)
@@ -625,14 +652,16 @@ export struct SmartTextRenderer {
     Row({ space: 8 }) {
       // 列表项目符号
       Text('•')
-        .fontSize(16)
+        .fontSize(this.fontSettings.chatFontSize)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.fontManager.getFontFamilyCss())
         .margin({ top: 2 })
-      
+
       // 列表项内容 - 暂时强制使用Text测试间距问题
       Text(this.stripMarkdownFormats(block.content))
-        .fontSize(16)
+        .fontSize(this.fontSettings.chatFontSize)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.fontManager.getFontFamilyCss())
         .textAlign(TextAlign.Start)
         .copyOption(CopyOptions.LocalDevice)
         .wordBreak(WordBreak.BREAK_WORD)
@@ -653,18 +682,20 @@ export struct SmartTextRenderer {
     Row() {
       // 列表项目符号
       Text('•')
-        .fontSize(16)
+        .fontSize(this.fontSettings.chatFontSize)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.fontManager.getFontFamilyCss())
         .margin({ right: 8, top: 2 })
-      
+
       // 列表项内容
       Column() {
         if (block.inlineFormats && block.inlineFormats.length > 0) {
-          this.buildRichText(block.content, block.inlineFormats, 16, FontWeight.Normal);
+          this.buildRichText(block.content, block.inlineFormats, this.fontSettings.chatFontSize, FontWeight.Normal);
         } else {
           Text(block.content)
-            .fontSize(16)
+            .fontSize(this.fontSettings.chatFontSize)
             .fontColor($r('app.color.text_primary'))
+            .fontFamily(this.fontManager.getFontFamilyCss())
             .textAlign(TextAlign.Start)
             .copyOption(CopyOptions.LocalDevice)
             .wordBreak(WordBreak.BREAK_WORD)
@@ -688,14 +719,15 @@ export struct SmartTextRenderer {
     Column() {
       // 暂时都使用Text组件，避免RichText的问题
       Text(this.stripMarkdownFormats(block.content))
-        .fontSize(16)
+        .fontSize(this.fontSettings.chatFontSize)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.fontManager.getFontFamilyCss())
         .textAlign(TextAlign.Start)
         .copyOption(CopyOptions.LocalDevice)
         .wordBreak(WordBreak.BREAK_WORD)
-        .lineHeight(24)
-        .minFontSize(16)
-        .maxFontSize(16)
+        .lineHeight(this.fontSettings.chatFontSize * 1.5)
+        .minFontSize(this.fontSettings.chatFontSize)
+        .maxFontSize(this.fontSettings.chatFontSize)
     }
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
@@ -720,7 +752,7 @@ export struct SmartTextRenderer {
    * 构建带行内格式的富文本
    */
   @Builder
-  buildRichText(content: string, formats: InlineFormat[], fontSize: number = 16, fontWeight: FontWeight = FontWeight.Normal) {
+  buildRichText(content: string, formats: InlineFormat[], fontSize: number = this.fontSettings.chatFontSize, fontWeight: FontWeight = FontWeight.Normal) {
     Column() {
       RichText(this.wrapWithBaseStyle(this.processInlineFormats(content, formats), fontSize, fontWeight))
         .width('100%')
@@ -782,7 +814,8 @@ export struct SmartTextRenderer {
   private wrapWithBaseStyle(html: string, fontSize: number, fontWeight: FontWeight): string {
     const cssWeight = this.toCssFontWeight(fontWeight);
     const lineHeight = Math.round(fontSize * 1.5);
-    return `<div style="width: 100%; box-sizing: border-box; font-size: ${fontSize}px; font-weight: ${cssWeight}; line-height: ${lineHeight}px; color: inherit; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;">${html}</div>`;
+    const fontFamily = this.fontManager.getFontFamilyCss();
+    return `<div style="width: 100%; box-sizing: border-box; font-size: ${fontSize}px; font-weight: ${cssWeight}; font-family: ${fontFamily}; line-height: ${lineHeight}px; color: inherit; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;">${html}</div>`;
   }
 
   /**
@@ -842,13 +875,14 @@ export struct SmartTextRenderer {
   buildParagraph(block: TextBlock) {
     // 暂时都使用Text组件，避免RichText的问题
     Text(this.stripMarkdownFormats(block.content))
-      .fontSize(16)
+      .fontSize(this.fontSettings.chatFontSize)
       .fontColor($r('app.color.text_primary'))
+      .fontFamily(this.fontManager.getFontFamilyCss())
       .textAlign(TextAlign.Start)
       .copyOption(CopyOptions.LocalDevice)
       .wordBreak(WordBreak.BREAK_WORD)
-      .lineHeight(24)
-      .minFontSize(16)
-      .maxFontSize(16)
+      .lineHeight(this.fontSettings.chatFontSize * 1.5)
+      .minFontSize(this.fontSettings.chatFontSize)
+      .maxFontSize(this.fontSettings.chatFontSize)
   }
 }
