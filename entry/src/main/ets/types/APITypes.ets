@@ -21,6 +21,7 @@ export interface ChatMessage {
   role: string;
   content: string;
   tool_calls?: ToolCall[]; // 工具调用列表
+  tool_call_id?: string; // 工具结果消息的ID
 }
 
 // 工具调用接口
@@ -33,6 +34,13 @@ export interface ToolCall {
 export interface ToolCallFunction {
   name: string;
   arguments: string; // JSON字符串格式的参数
+}
+
+// 工具结果消息接口
+export interface ToolResultMessage {
+  role: 'tool';
+  tool_call_id: string;
+  content: string;
 }
 
 // 聊天请求接口

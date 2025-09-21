@@ -388,3 +388,89 @@ export type MCPEventListener = (event: MCPEvent) => void;
 
 // 导出需要的类型
 export type { ParamType };
+
+// ========================================
+// 应用拉起工具相关类型定义
+// ========================================
+
+/**
+ * 应用启动参数类型
+ */
+export interface AppLaunchParameters {
+  bundleName: string;
+  abilityName?: string;
+  parameters?: Record<string, string | number | boolean>;
+}
+
+/**
+ * 应用启动结果枚举
+ */
+export enum AppLaunchResult {
+  SUCCESS = 'success',
+  PERMISSION_DENIED = 'permission_denied',
+  APP_NOT_FOUND = 'app_not_found',
+  LAUNCH_FAILED = 'launch_failed',
+  INVALID_PARAMETERS = 'invalid_parameters'
+}
+
+/**
+ * 应用启动权限枚举
+ */
+export enum AppLaunchPermission {
+  START_ABILITIES_FROM_BACKGROUND = 'ohos.permission.START_ABILITIES_FROM_BACKGROUND',
+  GET_BUNDLE_INFO = 'ohos.permission.GET_BUNDLE_INFO'
+}
+
+/**
+ * 已安装应用信息类型
+ */
+export interface InstalledApplication {
+  bundleName: string;
+  appName: string;
+  version: string;
+}
+
+/**
+ * 应用启动验证结果类型
+ */
+export interface AppLaunchValidationResult {
+  isValid: boolean;
+  error?: string;
+}
+
+/**
+ * 应用权限检查结果类型
+ */
+export interface AppLaunchPermissionCheck {
+  hasPermissions: boolean;
+  missingPermissions?: Array<AppLaunchPermission>;
+  error?: string;
+}
+
+/**
+ * 应用存在检查结果类型
+ */
+export interface AppLaunchExistenceCheck {
+  exists: boolean;
+  appName?: string;
+  version?: string;
+  error?: string;
+}
+
+/**
+ * 应用启动执行结果类型
+ */
+export interface AppLaunchExecutionResult {
+  result: AppLaunchResult;
+  error?: string;
+  details?: Record<string, string | number | boolean>;
+}
+
+/**
+ * JSON Schema 扩展接口 - 用于应用启动工具
+ */
+export interface AppLauncherJSONSchema extends JSONSchema {
+  type: string;
+  required: Array<string>;
+  properties: Record<string, JSONSchema>;
+}

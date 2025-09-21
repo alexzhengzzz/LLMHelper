@@ -88,9 +88,9 @@ export interface IDirectAPIService {
   sendChatRequestWithTools(request: ChatRequest, provider: AIProvider, includeTools?: boolean): Promise<ChatResponse>;
 
   /**
-   * 处理工具调用响应并执行工具
+   * 处理工具调用响应并执行工具，然后将结果返回给大模型生成最终回答
    */
-  processToolCallsInResponse(response: ChatResponse): Promise<ChatResponse>;
+  processToolCallsInResponse(response: ChatResponse, provider: AIProvider, originalRequest: ChatRequest): Promise<ChatResponse>;
 
   /**
    * 初始化本地工具管理器

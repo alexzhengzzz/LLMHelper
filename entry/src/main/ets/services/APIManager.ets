@@ -250,8 +250,8 @@ export class APIManager {
           // 使用带工具支持的聊天请求
           if (this.directAPIService instanceof DirectAPIService) {
             const response = await (this.directAPIService as DirectAPIService).sendChatRequestWithTools(request, modelProvider, true);
-            // 处理工具调用
-            return await (this.directAPIService as DirectAPIService).processToolCallsInResponse(response);
+            // 处理工具调用，并将结果返回给大模型生成最终回答
+            return await (this.directAPIService as DirectAPIService).processToolCallsInResponse(response, modelProvider, request);
           } else {
             // 回退到普通聊天请求
             return await this.directAPIService.sendChatRequest(request, modelProvider);

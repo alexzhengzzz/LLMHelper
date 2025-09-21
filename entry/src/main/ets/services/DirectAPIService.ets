@@ -12,7 +12,14 @@ import { APIKeyManager } from '../utils/APIKeyManager';
 import { IDirectAPIService } from '../di/ServiceInterfaces';
 import { LocalToolManager } from './LocalToolManager';
 import { MCPTool, ToolCallRequest, ToolCallResult, ParamType } from '../types/MCPTypes';
-// import { GeminiClient } from '../clients/GeminiClient'; // 已禁用 - 暂不可用
+
+/**
+ * 工具结果项接口
+ */
+interface ToolResultItem {
+  toolCall: import('../types/APITypes').ToolCall;
+  result: ToolCallResult;
+}
 
 export class DirectAPIService implements IDirectAPIService {
   private clients: Map<AIProvider, BaseAPIClient>;
@@ -478,9 +485,9 @@ export class DirectAPIService implements IDirectAPIService {
   }
 
   /**
-   * 处理工具调用响应并执行工具
+   * 处理工具调用响应并执行工具，然后将结果返回给大模型生成最终回答
    */
-  async processToolCallsInResponse(response: ChatResponse): Promise<ChatResponse> {
+  async processToolCallsInResponse(response: ChatResponse, provider: AIProvider, originalRequest: ChatRequest): Promise<ChatResponse> {
     try {
       // 检查响应中是否有工具调用
       if (!response.choices || response.choices.length === 0) {
@@ -493,10 +500,10 @@ export class DirectAPIService implements IDirectAPIService {
         return response;
       }
 
-      Logger.info('DirectAPIService', `响应中发现 ${firstChoice.message.tool_calls.length} 个工具调用`);
+      Logger.info('DirectAPIService', `响应中发现 ${firstChoice.message.tool_calls.length} 个工具调用，开始执行并返回结果给大模型`);
 
       // 执行所有工具调用
-      const toolResults: ToolCallResult[] = [];
+      const toolResults: ToolResultItem[] = [];
       for (const toolCall of firstChoice.message.tool_calls) {
         if (toolCall.type === 'function') {
           try {
@@ -516,7 +523,8 @@ export class DirectAPIService implements IDirectAPIService {
             };
 
             const toolResult = await this.executeToolCall(toolRequest);
-            toolResults.push(toolResult);
+            const resultItem: ToolResultItem = { toolCall: toolCall, result: toolResult };
+            toolResults.push(resultItem);
 
             Logger.info('DirectAPIService', `工具 ${toolCall.function.name} 执行完成`);
 
@@ -529,21 +537,127 @@ export class DirectAPIService implements IDirectAPIService {
               }],
               isError: true
             };
-            toolResults.push(errorResult);
+            const errorItem: ToolResultItem = { toolCall: toolCall, result: errorResult };
+            toolResults.push(errorItem);
           }
         }
       }
 
       // 将工具执行结果添加到响应状态
-      response.tool_status = toolResults.some(result => result.isError) ? 'failed' : 'completed';
+      const hasError = toolResults.some(item => item.result.isError);
+      response.tool_status = hasError ? 'failed' : 'completed';
 
-      Logger.info('DirectAPIService', `所有工具调用处理完成，状态: ${response.tool_status}`);
-      return response;
+      Logger.info('DirectAPIService', `工具调用执行完成，状态: ${response.tool_status}，开始将结果返回给大模型`);
+
+      // 构建包含工具结果的后续请求
+      const followUpRequest = this.buildFollowUpRequest(originalRequest, firstChoice.message, toolResults);
+
+      // 发送第二轮请求给大模型，获取基于工具结果的最终回答
+      const finalResponse = await this.sendFollowUpRequest(followUpRequest, provider);
+
+      Logger.info('DirectAPIService', `大模型基于工具结果生成最终回答完成`);
+      return finalResponse;
 
     } catch (error) {
       Logger.error('DirectAPIService', `处理工具调用失败: ${error}`);
       response.tool_status = 'failed';
       return response;
+    }
+  }
+
+  /**
+   * 构建包含工具结果的后续请求
+   */
+  private buildFollowUpRequest(originalRequest: ChatRequest, assistantMessage: import('../types/APITypes').ChatMessage, toolResults: ToolResultItem[]): ChatRequest {
+    // 复制原始请求的所有消息
+    const followUpMessages: import('../types/APITypes').ChatMessage[] = [];
+    for (let i = 0; i < originalRequest.messages.length; i++) {
+      followUpMessages.push(originalRequest.messages[i]);
+    }
+
+    // 添加助手的回复（包含工具调用）
+    followUpMessages.push({
+      role: 'assistant',
+      content: assistantMessage.content,
+      tool_calls: assistantMessage.tool_calls
+    });
+
+    // 为每个工具结果添加对应的工具消息
+    for (let i = 0; i < toolResults.length; i++) {
+      const toolItem = toolResults[i];
+      const toolResultContent = this.formatToolResultContent(toolItem.result);
+      followUpMessages.push({
+        role: 'tool',
+        content: toolResultContent,
+        tool_call_id: toolItem.toolCall.id
+      });
+    }
+
+    Logger.info('DirectAPIService', `构建后续请求，消息数量: ${followUpMessages.length}`);
+
+    const followUpRequest: ChatRequest = {
+      messages: followUpMessages,
+      model: originalRequest.model,
+      max_tokens: originalRequest.max_tokens,
+      temperature: originalRequest.temperature,
+      stream: originalRequest.stream,
+      enable_web: originalRequest.enable_web,
+      timeout: originalRequest.timeout
+    };
+
+    return followUpRequest;
+  }
+
+  /**
+   * 格式化工具结果内容
+   */
+  private formatToolResultContent(result: ToolCallResult): string {
+    if (result.isError) {
+      const firstContent = result.content[0];
+      if (firstContent && firstContent.type === 'text') {
+        return `工具执行失败: ${firstContent.text}`;
+      }
+      return '工具执行失败: 未知错误';
+    }
+
+    // 提取所有内容块的文本
+    const contentTexts: string[] = [];
+    for (let i = 0; i < result.content.length; i++) {
+      const content = result.content[i];
+      if (content.type === 'text') {
+        contentTexts.push(content.text);
+      }
+    }
+
+    return contentTexts.join('\n');
+  }
+
+  /**
+   * 发送后续请求获取最终回答
+   */
+  private async sendFollowUpRequest(request: ChatRequest, provider: AIProvider): Promise<ChatResponse> {
+    try {
+      Logger.info('DirectAPIService', `发送后续请求给大模型，提供商: ${provider}`);
+
+      // 使用原有的sendChatRequest方法，但不包含工具定义
+      const requestWithoutTools: ChatRequest = {
+        messages: request.messages,
+        model: request.model,
+        max_tokens: request.max_tokens,
+        temperature: request.temperature,
+        stream: request.stream,
+        enable_web: request.enable_web,
+        timeout: request.timeout
+      };
+
+      const response = await this.sendChatRequest(requestWithoutTools, provider);
+
+      Logger.info('DirectAPIService', `后续请求完成，获得最终回答`);
+      return response;
+
+    } catch (error) {
+      Logger.error('DirectAPIService', `发送后续请求失败: ${error}`);
+      throw new Error(`发送后续请求失败: ${error instanceof Error ? error.message : '未知错误'}`);
     }
   }
 

@@ -7,6 +7,7 @@ import {
 } from '../types/MCPTypes';
 import { Logger } from '../utils/Logger';
 import CalculatorTool from './CalculatorTool';
+import AppLauncherTool from './AppLauncherTool';
 
 /**
  * 本地工具执行器接口
@@ -46,6 +47,21 @@ class CalculatorToolExecutor implements LocalToolExecutor {
 }
 
 /**
+ * 应用启动工具执行器
+ */
+class AppLauncherToolExecutor implements LocalToolExecutor {
+  private appLauncherTool: AppLauncherTool;
+
+  constructor(appLauncherTool: AppLauncherTool) {
+    this.appLauncherTool = appLauncherTool;
+  }
+
+  async execute(request: ToolCallRequest): Promise<ToolCallResult> {
+    return this.appLauncherTool.execute(request);
+  }
+}
+
+/**
  * 本地工具管理器
  * 管理和执行本地MCP工具
  */
@@ -53,10 +69,13 @@ export class LocalToolManager {
   private static instance: LocalToolManager | null = null;
   private registeredTools: Map<string, MCPTool> = new Map();
   private toolExecutors: Map<string, LocalToolExecutor> = new Map();
+  private context: common.UIAbilityContext;
 
   private constructor(context: common.UIAbilityContext) {
+    this.context = context;
     this.registerAppManagementTools();
     this.registerCalculatorTool();
+    this.registerAppLauncherTool();
     Logger.info('LocalToolManager', 'Local tool manager initialized');
   }
 
@@ -119,6 +138,20 @@ export class LocalToolManager {
     this.toolExecutors.set(toolDefinition.name, executor);
 
     Logger.info('LocalToolManager', `Calculator tool registered: ${toolDefinition.name}`);
+  }
+
+  /**
+   * 注册应用启动工具
+   */
+  private registerAppLauncherTool(): void {
+    const appLauncherTool = AppLauncherTool.getInstance(this.context);
+    const toolDefinition = appLauncherTool.getToolDefinition();
+
+    this.registeredTools.set(toolDefinition.name, toolDefinition);
+    const executor: LocalToolExecutor = new AppLauncherToolExecutor(appLauncherTool);
+    this.toolExecutors.set(toolDefinition.name, executor);
+
+    Logger.info('LocalToolManager', `App launcher tool registered: ${toolDefinition.name}`);
   }
 
   /**
@@ -238,6 +271,12 @@ export class LocalToolManager {
         toolName.startsWith('get_theme_') || toolName.startsWith('get_font_') ||
         toolName.startsWith('get_session_') || toolName.startsWith('clear_')) {
       return 'application';
+    }
+    if (toolName === 'app_launcher' || toolName.startsWith('app_')) {
+      return 'system';
+    }
+    if (toolName === 'calculator') {
+      return 'utility';
     }
     return 'custom';
   }
