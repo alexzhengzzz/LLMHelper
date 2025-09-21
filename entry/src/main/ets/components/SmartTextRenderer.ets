@@ -162,7 +162,10 @@ class SmartTextParser {
         const inlineFormats = SmartTextParser.parseInlineFormats(content);
         
         // 检查是否包含关键词，如果包含则标记为高亮类型
-        if (SmartTextParser.containsKeywords(content)) {
+        const isHighlight = SmartTextParser.containsKeywords(content);
+        Logger.debug(TAG, `文本块解析: 长度=${content.length}, 是否高亮=${isHighlight}, 内容预览="${content.substring(0, 50)}..."`);
+
+        if (isHighlight) {
           blocks.push({
             type: TextBlockType.HIGHLIGHT,
             content: content,
@@ -379,7 +382,12 @@ class SmartTextParser {
     if (!content || content.length < 2) {
       return false;
     }
-    
+
+    // 如果内容过长（300），则不进行高亮处理，避免误判
+    if (content.length > 300) {
+      return false;
+    }
+
     const lowerContent = content.toLowerCase();
     return SmartTextParser.KEYWORDS.some(keyword => 
       content.includes(keyword) || lowerContent.includes(keyword.toLowerCase())
@@ -536,7 +544,7 @@ export struct SmartTextRenderer {
           .fontWeight(fontWeight)
           .fontColor($r('app.color.text_primary'))
           .textAlign(TextAlign.Start)
-          .copyOption(CopyOptions.InApp)
+          .copyOption(CopyOptions.LocalDevice)
           .wordBreak(WordBreak.BREAK_WORD)
           .lineHeight(fontSize * 1.3)
       }
@@ -583,7 +591,7 @@ export struct SmartTextRenderer {
         .fontColor($r('app.color.text_primary'))
         .fontFamily('Monaco, Consolas, monospace')
         .textAlign(TextAlign.Start)
-        .copyOption(CopyOptions.InApp)
+        .copyOption(CopyOptions.LocalDevice)
         .wordBreak(WordBreak.BREAK_WORD)
         .padding(12)
         .backgroundColor($r('app.color.code_background'))
@@ -626,7 +634,7 @@ export struct SmartTextRenderer {
         .fontSize(16)
         .fontColor($r('app.color.text_primary'))
         .textAlign(TextAlign.Start)
-        .copyOption(CopyOptions.InApp)
+        .copyOption(CopyOptions.LocalDevice)
         .wordBreak(WordBreak.BREAK_WORD)
         .lineHeight(24)
         .layoutWeight(1)
@@ -658,7 +666,7 @@ export struct SmartTextRenderer {
             .fontSize(16)
             .fontColor($r('app.color.text_primary'))
             .textAlign(TextAlign.Start)
-            .copyOption(CopyOptions.InApp)
+            .copyOption(CopyOptions.LocalDevice)
             .wordBreak(WordBreak.BREAK_WORD)
             .lineHeight(24)
         }
@@ -678,17 +686,16 @@ export struct SmartTextRenderer {
   @Builder
   buildHighlightText(block: TextBlock) {
     Column() {
-      if (block.inlineFormats && block.inlineFormats.length > 0) {
-        this.buildRichText(block.content, block.inlineFormats, 16, FontWeight.Normal);
-      } else {
-        Text(block.content)
-          .fontSize(16)
-          .fontColor($r('app.color.text_primary'))
-          .textAlign(TextAlign.Start)
-          .copyOption(CopyOptions.InApp)
-          .wordBreak(WordBreak.BREAK_WORD)
-          .lineHeight(24)
-      }
+      // 暂时都使用Text组件，避免RichText的问题
+      Text(this.stripMarkdownFormats(block.content))
+        .fontSize(16)
+        .fontColor($r('app.color.text_primary'))
+        .textAlign(TextAlign.Start)
+        .copyOption(CopyOptions.LocalDevice)
+        .wordBreak(WordBreak.BREAK_WORD)
+        .lineHeight(24)
+        .minFontSize(16)
+        .maxFontSize(16)
     }
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
@@ -714,15 +721,18 @@ export struct SmartTextRenderer {
    */
   @Builder
   buildRichText(content: string, formats: InlineFormat[], fontSize: number = 16, fontWeight: FontWeight = FontWeight.Normal) {
-    RichText(this.wrapWithBaseStyle(this.processInlineFormats(content, formats), fontSize, fontWeight))
-      .width('100%')
-      .layoutWeight(1)
-      .onStart(() => {
-        Logger.info(TAG, '富文本开始渲染');
-      })
-      .onComplete(() => {
-        Logger.info(TAG, '富文本渲染完成');
-      })
+    Column() {
+      RichText(this.wrapWithBaseStyle(this.processInlineFormats(content, formats), fontSize, fontWeight))
+        .width('100%')
+        .onStart(() => {
+          Logger.info(TAG, '富文本开始渲染');
+        })
+        .onComplete(() => {
+          Logger.info(TAG, '富文本渲染完成');
+        })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
   }
   
   /**
@@ -771,8 +781,8 @@ export struct SmartTextRenderer {
    */
   private wrapWithBaseStyle(html: string, fontSize: number, fontWeight: FontWeight): string {
     const cssWeight = this.toCssFontWeight(fontWeight);
-    const lineHeight = Math.round(fontSize * 1.3);
-    return `<span style="display: inline-block; width: 100%; font-size: ${fontSize}px; font-weight: ${cssWeight}; line-height: ${lineHeight}px; color: inherit; white-space: pre-wrap;">${html}</span>`;
+    const lineHeight = Math.round(fontSize * 1.5);
+    return `<div style="width: 100%; box-sizing: border-box; font-size: ${fontSize}px; font-weight: ${cssWeight}; line-height: ${lineHeight}px; color: inherit; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;">${html}</div>`;
   }
 
   /**
@@ -830,16 +840,15 @@ export struct SmartTextRenderer {
    */
   @Builder
   buildParagraph(block: TextBlock) {
-    if (block.inlineFormats && block.inlineFormats.length > 0) {
-      this.buildRichText(block.content, block.inlineFormats, 16, FontWeight.Normal);
-    } else {
-      Text(block.content)
-        .fontSize(16)
-        .fontColor($r('app.color.text_primary'))
-        .textAlign(TextAlign.Start)
-        .copyOption(CopyOptions.InApp)
-        .wordBreak(WordBreak.BREAK_WORD)
-        .lineHeight(24)
-    }
+    // 暂时都使用Text组件，避免RichText的问题
+    Text(this.stripMarkdownFormats(block.content))
+      .fontSize(16)
+      .fontColor($r('app.color.text_primary'))
+      .textAlign(TextAlign.Start)
+      .copyOption(CopyOptions.LocalDevice)
+      .wordBreak(WordBreak.BREAK_WORD)
+      .lineHeight(24)
+      .minFontSize(16)
+      .maxFontSize(16)
   }
 }
