@@ -2,11 +2,20 @@ import {
   MCPTool,
   ToolCallRequest,
   ToolCallResult,
-  JSONSchema
+  JSONSchema,
+  ParamType,
+  TextContent,
+  ImageContent
 } from '../types/MCPTypes';
 import { LocalToolManager } from '../services/LocalToolManager';
 import { Logger } from '../utils/Logger';
 import { ThemeManager } from '../utils/ThemeManager';
+
+interface ToolCategoryInfo {
+  key: string;
+  name: string;
+  count: number;
+}
 
 /**
  * MCP工具组件
@@ -16,15 +25,15 @@ import { ThemeManager } from '../utils/ThemeManager';
 export struct MCPToolsComponent {
   @Local private availableTools: Array<MCPTool> = [];
   @Local private selectedTool: MCPTool | null = null;
-  @Local private toolParams: Record<string, ESObject> = {};
+  @Local private toolParams: ParamType = {};
   @Local private isExecuting: boolean = false;
   @Local private executionResult: ToolCallResult | null = null;
   @Local private showResult: boolean = false;
   @Local private searchText: string = '';
   @Local private selectedCategory: string = 'all';
 
-  @Param onToolExecuted?: (result: ToolCallResult) => void;
-  @Param onClose?: () => void;
+  @Param onToolExecuted?: (result: ToolCallResult) => void = () => {};
+  @Param onClose?: () => void = () => {};
 
   private localToolManager: LocalToolManager | null = null;
 
@@ -51,7 +60,7 @@ export struct MCPToolsComponent {
   /**
    * 获取工具分类
    */
-  private getToolCategories(): Array<{key: string, name: string, count: number}> {
+  private getToolCategories(): Array<ToolCategoryInfo> {
     const categories = new Map<string, number>();
 
     for (const tool of this.availableTools) {
@@ -59,17 +68,17 @@ export struct MCPToolsComponent {
       categories.set(category, (categories.get(category) || 0) + 1);
     }
 
-    const result = [
+    const result: ToolCategoryInfo[] = [
       { key: 'all', name: '全部', count: this.availableTools.length }
     ];
 
-    for (const [key, count] of categories) {
+    categories.forEach((count, key) => {
       result.push({
         key: key,
         name: this.getCategoryDisplayName(key),
         count: count
       });
-    }
+    });
 
     return result;
   }
@@ -149,7 +158,7 @@ export struct MCPToolsComponent {
         arguments: this.toolParams
       };
 
-      Logger.info('MCPToolsComponent', `Executing tool: ${this.selectedTool.name}`, this.toolParams);
+      Logger.info('MCPToolsComponent', `Executing tool: ${this.selectedTool.name}`, JSON.stringify(this.toolParams));
 
       const result = await this.localToolManager.executeTool(request);
       this.executionResult = result;
@@ -160,9 +169,9 @@ export struct MCPToolsComponent {
         this.onToolExecuted(result);
       }
 
-      Logger.info('MCPToolsComponent', `Tool execution completed: ${this.selectedTool.name}`, {
+      Logger.info('MCPToolsComponent', `Tool execution completed: ${this.selectedTool.name}`, JSON.stringify({
         success: !result.isError
-      });
+      }));
 
     } catch (error) {
       Logger.error('MCPToolsComponent', `Tool execution failed: ${this.selectedTool.name}`, error);
@@ -183,7 +192,7 @@ export struct MCPToolsComponent {
    * 重置参数
    */
   private resetParams(): void {
-    this.toolParams = {};
+    this.toolParams = {} as ParamType;
     this.executionResult = null;
     this.showResult = false;
   }
@@ -193,100 +202,117 @@ export struct MCPToolsComponent {
    */
   @Builder
   buildParameterForm() {
-    if (!this.selectedTool || !this.selectedTool.inputSchema.properties) {
-      return;
-    }
+    if (this.selectedTool) {
+      Column({ space: 12 }) {
+        Text('参数设置')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .alignSelf(ItemAlign.Start)
 
-    Column({ space: 12 }) {
-      Text('参数设置')
-        .fontSize(16)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-        .alignSelf(ItemAlign.Start)
+        this.buildParameterInputs()
 
-      ForEach(Object.keys(this.selectedTool.inputSchema.properties), (paramName: string) => {
-        this.buildParameterInput(paramName, this.selectedTool!.inputSchema.properties![paramName]);
-      });
+        Row({ space: 12 }) {
+          Button('重置')
+            .type(ButtonType.Normal)
+            .backgroundColor(Color.Transparent)
+            .borderWidth(1)
+            .borderColor($r('app.color.border_color'))
+            .fontColor($r('app.color.text_secondary'))
+            .borderRadius(8)
+            .height(40)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.resetParams();
+            })
 
-      Row({ space: 12 }) {
-        Button('重置')
-          .type(ButtonType.Normal)
-          .backgroundColor(Color.Transparent)
-          .borderWidth(1)
-          .borderColor($r('app.color.border_color'))
-          .fontColor($r('app.color.text_secondary'))
-          .borderRadius(8)
-          .height(40)
-          .layoutWeight(1)
-          .onClick(() => {
-            this.resetParams();
-          })
-
-        Button('执行')
-          .type(ButtonType.Normal)
-          .backgroundColor($r('app.color.primary_color'))
-          .fontColor(Color.White)
-          .borderRadius(8)
-          .height(40)
-          .layoutWeight(1)
-          .enabled(!this.isExecuting)
-          .onClick(() => {
-            this.executeTool();
-          })
+          Button('执行')
+            .type(ButtonType.Normal)
+            .backgroundColor($r('app.color.primary_color'))
+            .fontColor(Color.White)
+            .borderRadius(8)
+            .height(40)
+            .layoutWeight(1)
+            .enabled(!this.isExecuting)
+            .onClick(() => {
+              this.executeTool();
+            })
+        }
+        .width('100%')
       }
       .width('100%')
+      .padding(16)
+      .backgroundColor($r('app.color.surface_color'))
+      .borderRadius(12)
     }
-    .width('100%')
-    .padding(16)
-    .backgroundColor($r('app.color.surface_color'))
-    .borderRadius(12)
+  }
+
+  @Builder
+  buildParameterInputs() {
+    ForEach(this.getParameterNames(), (paramName: string) => {
+      if (this.getParameterSchema(paramName)) {
+        this.buildParameterInput(paramName, this.getParameterSchema(paramName));
+      }
+    });
+  }
+
+  private getParameterNames(): Array<string> {
+    const properties = this.selectedTool!.inputSchema.properties || {};
+    return Object.keys(properties);
+  }
+
+  private getParameterSchema(paramName: string): JSONSchema | undefined {
+    const properties = this.selectedTool!.inputSchema.properties || {};
+    return properties[paramName];
   }
 
   /**
    * 构建参数输入项
    */
   @Builder
-  buildParameterInput(paramName: string, schema: JSONSchema) {
-    Column({ space: 8 }) {
-      Row() {
-        Text(paramName)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-
-        if (this.selectedTool?.inputSchema.required?.includes(paramName)) {
-          Text(' *')
+  buildParameterInput(paramName: string, schema: JSONSchema | undefined) {
+    if (schema) {
+      Column({ space: 8 }) {
+        Row() {
+          Text(paramName)
             .fontSize(14)
-            .fontColor('#F44336')
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+
+          if (this.selectedTool?.inputSchema.required?.includes(paramName)) {
+            Text(' *')
+              .fontSize(14)
+              .fontColor('#F44336')
+          }
+
+          Blank()
+
+          if (schema.description) {
+            Text(schema.description)
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
         }
+        .width('100%')
 
-        Blank()
-
-        if (schema.description) {
-          Text(schema.description)
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (schema.type === 'string' && schema.enum) {
+          // 枚举选择
+          this.buildEnumSelector(paramName, schema.enum as Array<string>);
+        } else if (schema.type === 'boolean') {
+          // 布尔开关
+          this.buildBooleanToggle(paramName);
+        } else if (schema.type === 'number') {
+          // 数字输入
+          this.buildNumberInput(paramName, schema);
+        } else {
+          // 文本输入
+          this.buildTextInput(paramName, schema);
         }
       }
       .width('100%')
-
-      if (schema.type === 'string' && schema.enum) {
-        // 枚举选择
-        this.buildEnumSelector(paramName, schema.enum as Array<string>);
-      } else if (schema.type === 'boolean') {
-        // 布尔开关
-        this.buildBooleanToggle(paramName);
-      } else if (schema.type === 'number') {
-        // 数字输入
-        this.buildNumberInput(paramName, schema);
-      } else {
-        // 文本输入
-        this.buildTextInput(paramName, schema);
-      }
     }
-    .width('100%')
   }
 
   /**
@@ -350,7 +376,14 @@ export struct MCPToolsComponent {
         if (!isNaN(numValue)) {
           this.toolParams[paramName] = numValue;
         } else {
-          delete this.toolParams[paramName];
+          // 从对象中移除该属性
+          const newParams: ParamType = {};
+          Object.keys(this.toolParams).forEach((key: string) => {
+            if (key !== paramName) {
+              newParams[key] = this.toolParams[key];
+            }
+          });
+          this.toolParams = newParams;
         }
       })
   }
@@ -372,7 +405,14 @@ export struct MCPToolsComponent {
         if (value.trim()) {
           this.toolParams[paramName] = value;
         } else {
-          delete this.toolParams[paramName];
+          // 从对象中移除该属性
+          const newParams: ParamType = {};
+          Object.keys(this.toolParams).forEach((key: string) => {
+            if (key !== paramName) {
+              newParams[key] = this.toolParams[key];
+            }
+          });
+          this.toolParams = newParams;
         }
       })
   }
@@ -431,7 +471,7 @@ export struct MCPToolsComponent {
 
             // 分类标签
             Row({ space: 8 }) {
-              ForEach(this.getToolCategories(), (category: {key: string, name: string, count: number}) => {
+              ForEach(this.getToolCategories(), (category: ToolCategoryInfo) => {
                 Button(`${category.name} (${category.count})`)
                   .type(ButtonType.Normal)
                   .backgroundColor(this.selectedCategory === category.key ?
@@ -509,7 +549,7 @@ export struct MCPToolsComponent {
               .width('100%')
               .padding(12)
               .backgroundColor(this.selectedTool?.name === tool.name ?
-                $r('app.color.primary_color_light') : $r('app.color.background_color'))
+                $r('app.color.surface_color') : $r('app.color.background_color'))
               .borderRadius(8)
               .border({
                 width: 1,
@@ -552,9 +592,9 @@ export struct MCPToolsComponent {
 
               Scroll() {
                 Column({ space: 8 }) {
-                  ForEach(this.executionResult!.content, (content: {type: string, text?: string}) => {
-                    if (content.type === 'text' && content.text) {
-                      Text(content.text)
+                  ForEach(this.executionResult!.content, (content: TextContent | ImageContent) => {
+                    if (content.type === 'text' && (content as TextContent).text) {
+                      Text((content as TextContent).text)
                         .fontSize(12)
                         .fontColor(this.executionResult!.isError ?
                           '#F44336' : $r('app.color.text_primary'))
@@ -570,7 +610,7 @@ export struct MCPToolsComponent {
                 }
                 .width('100%')
               }
-              .maxHeight(200)
+              .height(200)
             }
             .width('100%')
             .padding(16)

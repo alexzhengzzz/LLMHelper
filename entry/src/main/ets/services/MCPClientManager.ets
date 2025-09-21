@@ -22,7 +22,10 @@ import {
   ClientCapabilities,
   JSONRPCNotification,
   MCPEvent,
-  MCPEventListener
+  MCPEventListener,
+  ParamType,
+  BaseType,
+  ComplexType
 } from '../types/MCPTypes';
 import { MCPJSONRPCClient, MCPError } from './MCPJSONRPCClient';
 import { Logger } from '../utils/Logger';
@@ -79,7 +82,7 @@ export class MCPClientManager {
   /**
    * 触发事件
    */
-  private emitEvent(type: string, serverId: string, data?: ESObject): void {
+  private emitEvent(type: string, serverId: string, data?: BaseType | MCPError | Array<BaseType | MCPError>): void {
     const event: MCPEvent = {
       type: type,
       serverId: serverId,
@@ -238,7 +241,7 @@ export class MCPClientManager {
       }
     };
 
-    const result = await rpcClient.request(MCPMessageType.INITIALIZE, initRequest as Record<string, ESObject>);
+    const result = await rpcClient.request<InitializeResult>(MCPMessageType.INITIALIZE, initRequest as ParamType);
     const initResult = result as InitializeResult;
 
     const connectionState = this.state.servers.get(serverId);
@@ -299,7 +302,7 @@ export class MCPClientManager {
     }
 
     try {
-      const result = await rpcClient.request(MCPMessageType.TOOLS_LIST, {});
+      const result = await rpcClient.request<{ tools: Array<MCPTool> }>(MCPMessageType.TOOLS_LIST, {});
       const toolsList = result as { tools: Array<MCPTool> };
 
       toolsList.tools.forEach(tool => {
@@ -324,7 +327,7 @@ export class MCPClientManager {
     }
 
     try {
-      const result = await rpcClient.request(MCPMessageType.RESOURCES_LIST, {});
+      const result = await rpcClient.request<ResourceListResult>(MCPMessageType.RESOURCES_LIST, {});
       const resourcesList = result as ResourceListResult;
 
       resourcesList.resources.forEach(resource => {
@@ -349,7 +352,7 @@ export class MCPClientManager {
     }
 
     try {
-      const result = await rpcClient.request(MCPMessageType.PROMPTS_LIST, {});
+      const result = await rpcClient.request<PromptListResult>(MCPMessageType.PROMPTS_LIST, {});
       const promptsList = result as PromptListResult;
 
       promptsList.prompts.forEach(prompt => {
@@ -367,7 +370,7 @@ export class MCPClientManager {
   /**
    * 调用工具
    */
-  async callTool(toolKey: string, args?: Record<string, ESObject>): Promise<ToolCallResult> {
+  async callTool(toolKey: string, args?: ParamType): Promise<ToolCallResult> {
     const [serverId, toolName] = toolKey.split('.');
     if (!serverId || !toolName) {
       throw new Error(`Invalid tool key: ${toolKey}`);
@@ -386,7 +389,7 @@ export class MCPClientManager {
     Logger.info('MCPClientManager', `Calling tool: ${toolKey}`, args);
 
     try {
-      const result = await rpcClient.request(MCPMessageType.TOOLS_CALL, request as Record<string, ESObject>);
+      const result = await rpcClient.request<ToolCallResult>(MCPMessageType.TOOLS_CALL, request as ParamType);
       const toolResult = result as ToolCallResult;
 
       this.emitEvent('tool_called', serverId, { tool: toolName, success: !toolResult.isError });
@@ -419,7 +422,7 @@ export class MCPClientManager {
     Logger.info('MCPClientManager', `Reading resource: ${resourceKey}`);
 
     try {
-      const result = await rpcClient.request(MCPMessageType.RESOURCES_READ, request as Record<string, ESObject>);
+      const result = await rpcClient.request<ResourceReadResult>(MCPMessageType.RESOURCES_READ, request as ParamType);
       const resourceResult = result as ResourceReadResult;
 
       this.emitEvent('resource_read', serverId, { uri: uri, success: true });
@@ -453,7 +456,7 @@ export class MCPClientManager {
     Logger.info('MCPClientManager', `Getting prompt: ${promptKey}`, args);
 
     try {
-      const result = await rpcClient.request(MCPMessageType.PROMPTS_GET, request as Record<string, ESObject>);
+      const result = await rpcClient.request<PromptGetResult>(MCPMessageType.PROMPTS_GET, request as ParamType);
       const promptResult = result as PromptGetResult;
 
       this.emitEvent('prompt_retrieved', serverId, { prompt: promptName, success: true });

@@ -5,11 +5,13 @@
 
 import { router } from '@kit.ArkUI';
 import { Logger } from '../utils/Logger';
+import { MCPToolsComponent } from '../components/MCPToolsComponent';
 
 @Entry
 @ComponentV2
 struct MCPSettingsPage {
   @Local private mcpStatus: string = 'Disconnected';
+  @Local private showMCPTools: boolean = false;
 
   aboutToAppear(): void {
     Logger.info('MCPSettingsPage', 'MCP Settings page initialized');
@@ -23,6 +25,7 @@ struct MCPSettingsPage {
         Column({ space: 16 }) {
           this.buildStatusCard()
           this.buildConnectionSettings()
+          this.buildMCPToolsSection()
           this.buildInfoCard()
         }
         .width('100%')
@@ -133,6 +136,56 @@ struct MCPSettingsPage {
       .onClick(() => {
         this.disconnectFromMCP();
       })
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor($r('app.color.surface_color'))
+    .borderRadius(12)
+  }
+
+  @Builder
+  buildMCPToolsSection() {
+    Column({ space: 16 }) {
+      Row({ space: 12 }) {
+        Text('MCP 工具箱')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+
+        Button() {
+          Text(this.showMCPTools ? '收起' : '展开')
+            .fontSize(14)
+            .fontColor(this.showMCPTools ? $r('app.color.text_secondary') : $r('app.color.primary_color'))
+        }
+        .type(ButtonType.Normal)
+        .backgroundColor(Color.Transparent)
+        .borderWidth(1)
+        .borderColor(this.showMCPTools ? $r('app.color.border_color') : $r('app.color.primary_color'))
+        .borderRadius(6)
+        .height(32)
+        .onClick(() => {
+          this.showMCPTools = !this.showMCPTools;
+        })
+      }
+      .width('100%')
+
+      if (this.showMCPTools) {
+        Column() {
+          MCPToolsComponent({
+            onClose: () => {
+              this.showMCPTools = false;
+            }
+          })
+        }
+        .width('100%')
+        .height(400)
+        .borderRadius(12)
+        .border({
+          width: 1,
+          color: $r('app.color.border_color')
+        })
+      }
     }
     .width('100%')
     .padding(16)

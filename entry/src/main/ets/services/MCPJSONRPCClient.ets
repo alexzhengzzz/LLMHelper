@@ -4,7 +4,23 @@ import {
   JSONRPCNotification,
   JSONRPCError,
   MCPMessage,
-  MCPErrorCode
+  MCPErrorCode,
+  MCPMessageType,
+  InitializeRequest,
+  InitializeResult,
+  ToolCallRequest,
+  ToolCallResult,
+  ResourceListRequest,
+  ResourceListResult,
+  ResourceReadRequest,
+  ResourceReadResult,
+  PromptListRequest,
+  PromptListResult,
+  PromptGetRequest,
+  PromptGetResult,
+  ParamType,
+  ResultType,
+  ErrorDataType
 } from '../types/MCPTypes';
 import { Logger } from '../utils/Logger';
 
@@ -14,7 +30,7 @@ import { Logger } from '../utils/Logger';
  */
 export class MCPJSONRPCClient {
   private requestId: number = 1;
-  private pendingRequests: Map<string | number, PendingRequest> = new Map();
+  private pendingRequests: Map<string | number, PendingRequest<ResultType>> = new Map();
   private messageHandler: ((message: string) => void) | null = null;
   private notificationHandler: ((notification: JSONRPCNotification) => void) | null = null;
 
@@ -35,7 +51,7 @@ export class MCPJSONRPCClient {
   /**
    * 发送JSON-RPC请求
    */
-  async request(method: string, params?: Record<string, ESObject>, timeout: number = 30000): Promise<ESObject> {
+  async request<T = ResultType>(method: string, params?: ParamType, timeout: number = 30000): Promise<T> {
     const id = this.generateRequestId();
 
     const request: JSONRPCRequest = {
@@ -45,60 +61,48 @@ export class MCPJSONRPCClient {
       params: params
     };
 
-    return new Promise<ESObject>((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       const timeoutHandle = setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(new Error(`Request timeout: ${method}`));
       }, timeout);
 
-      const pendingRequest: PendingRequest = {
-        resolve: resolve,
-        reject: reject,
-        timeout: timeoutHandle,
-        method: method,
-        timestamp: Date.now()
-      };
-
-      this.pendingRequests.set(id, pendingRequest);
-
-      try {
-        const message = JSON.stringify(request);
-        if (this.messageHandler) {
-          this.messageHandler(message);
-          Logger.debug('MCPJSONRPCClient', `Sent request: ${method}`, { id: id });
-        } else {
-          this.pendingRequests.delete(id);
+      this.pendingRequests.set(id, {
+        resolve: (result: ResultType) => {
           clearTimeout(timeoutHandle);
-          reject(new Error('No message handler configured'));
+          resolve(result as T);
+        },
+        reject: (error: Error) => {
+          clearTimeout(timeoutHandle);
+          reject(error);
         }
-      } catch (error) {
-        this.pendingRequests.delete(id);
-        clearTimeout(timeoutHandle);
-        reject(error);
-      }
+      });
+
+      this.sendMessage(JSON.stringify(request));
     });
   }
 
   /**
-   * 发送JSON-RPC通知（无需响应）
+   * 发送JSON-RPC通知
    */
-  notify(method: string, params?: Record<string, ESObject>): void {
+  notify(method: string, params?: ParamType): void {
     const notification: JSONRPCNotification = {
       jsonrpc: '2.0',
       method: method,
       params: params
     };
 
-    try {
-      const message = JSON.stringify(notification);
-      if (this.messageHandler) {
-        this.messageHandler(message);
-        Logger.debug('MCPJSONRPCClient', `Sent notification: ${method}`);
-      } else {
-        Logger.error('MCPJSONRPCClient', 'No message handler configured for notification');
-      }
-    } catch (error) {
-      Logger.error('MCPJSONRPCClient', `Failed to send notification: ${method}`, error);
+    this.sendMessage(JSON.stringify(notification));
+  }
+
+  /**
+   * 发送消息
+   */
+  private sendMessage(message: string): void {
+    if (this.messageHandler) {
+      this.messageHandler(message);
+    } else {
+      Logger.warn('MCPJSONRPCClient', 'No message handler set, message not sent');
     }
   }
 
@@ -114,15 +118,15 @@ export class MCPJSONRPCClient {
       } else if (this.isJSONRPCNotification(parsed)) {
         this.handleNotification(parsed);
       } else {
-        Logger.warn('MCPJSONRPCClient', 'Received unknown message type', parsed);
+        Logger.warn('MCPJSONRPCClient', 'Received invalid JSON-RPC message', parsed);
       }
     } catch (error) {
-      Logger.error('MCPJSONRPCClient', 'Failed to parse message', { message: message, error: error });
+      Logger.error('MCPJSONRPCClient', 'Failed to parse message', error);
     }
   }
 
   /**
-   * 处理JSON-RPC响应
+   * 处理响应
    */
   private handleResponse(response: JSONRPCResponse): void {
     const pendingRequest = this.pendingRequests.get(response.id);
@@ -132,29 +136,52 @@ export class MCPJSONRPCClient {
     }
 
     this.pendingRequests.delete(response.id);
-    clearTimeout(pendingRequest.timeout);
 
     if (response.error) {
-      const error = new MCPError(response.error.message, response.error.code, response.error.data);
-      Logger.error('MCPJSONRPCClient', `Request failed: ${pendingRequest.method}`, response.error);
+      const error = new MCPError(
+        response.error.message,
+        response.error.code,
+        response.error.data
+      );
       pendingRequest.reject(error);
+    } else if (response.result !== undefined) {
+      pendingRequest.resolve(response.result);
     } else {
-      Logger.debug('MCPJSONRPCClient', `Request completed: ${pendingRequest.method}`, { id: response.id });
-      pendingRequest.resolve(response.result || {});
+      pendingRequest.reject(new Error('Invalid response: no result or error'));
     }
   }
 
   /**
-   * 处理JSON-RPC通知
+   * 处理通知
    */
   private handleNotification(notification: JSONRPCNotification): void {
-    Logger.debug('MCPJSONRPCClient', `Received notification: ${notification.method}`, notification.params);
-
     if (this.notificationHandler) {
       this.notificationHandler(notification);
     } else {
-      Logger.warn('MCPJSONRPCClient', 'No notification handler configured');
+      Logger.warn('MCPJSONRPCClient', 'No notification handler set');
     }
+  }
+
+  /**
+   * 检查是否为JSON-RPC响应
+   */
+  private isJSONRPCResponse(obj: Record<string, unknown>): obj is JSONRPCResponse {
+    return obj &&
+           typeof obj === 'object' &&
+           obj.jsonrpc === '2.0' &&
+           (typeof obj.id === 'string' || typeof obj.id === 'number' || obj.id === null) &&
+           (obj.result !== undefined || obj.error !== undefined);
+  }
+
+  /**
+   * 检查是否为JSON-RPC通知
+   */
+  private isJSONRPCNotification(obj: Record<string, unknown>): obj is JSONRPCNotification {
+    return obj &&
+           typeof obj === 'object' &&
+           obj.jsonrpc === '2.0' &&
+           obj.method &&
+           obj.id === undefined;
   }
 
   /**
@@ -165,179 +192,69 @@ export class MCPJSONRPCClient {
   }
 
   /**
-   * 检查是否为JSON-RPC响应
-   */
-  private isJSONRPCResponse(obj: ESObject): obj is JSONRPCResponse {
-    return obj &&
-           typeof obj === 'object' &&
-           obj['jsonrpc'] === '2.0' &&
-           obj.hasOwnProperty('id') &&
-           (obj.hasOwnProperty('result') || obj.hasOwnProperty('error'));
-  }
-
-  /**
-   * 检查是否为JSON-RPC通知
-   */
-  private isJSONRPCNotification(obj: ESObject): obj is JSONRPCNotification {
-    return obj &&
-           typeof obj === 'object' &&
-           obj['jsonrpc'] === '2.0' &&
-           obj.hasOwnProperty('method') &&
-           !obj.hasOwnProperty('id');
-  }
-
-  /**
-   * 获取待处理请求数量
-   */
-  getPendingRequestCount(): number {
-    return this.pendingRequests.size;
-  }
-
-  /**
-   * 取消所有待处理请求
+   * 取消所有请求
    */
   cancelAllRequests(): void {
-    const error = new Error('Connection closed');
-
     for (const [id, request] of this.pendingRequests) {
-      clearTimeout(request.timeout);
-      request.reject(error);
-    }
-
-    this.pendingRequests.clear();
-    Logger.info('MCPJSONRPCClient', 'Cancelled all pending requests');
-  }
-
-  /**
-   * 取消指定请求
-   */
-  cancelRequest(requestId: string | number): boolean {
-    const request = this.pendingRequests.get(requestId);
-    if (request) {
-      clearTimeout(request.timeout);
       request.reject(new Error('Request cancelled'));
-      this.pendingRequests.delete(requestId);
-      Logger.debug('MCPJSONRPCClient', `Cancelled request: ${requestId}`);
-      return true;
     }
-    return false;
-  }
-
-  /**
-   * 获取请求统计信息
-   */
-  getStats(): JSONRPCStats {
-    const now = Date.now();
-    const pendingRequests: Array<RequestInfo> = [];
-
-    for (const [id, request] of this.pendingRequests) {
-      pendingRequests.push({
-        id: id,
-        method: request.method,
-        age: now - request.timestamp
-      });
-    }
-
-    return {
-      pendingCount: this.pendingRequests.size,
-      nextRequestId: this.requestId,
-      pendingRequests: pendingRequests
-    };
-  }
-
-  /**
-   * 清理超时请求
-   */
-  cleanupTimedOutRequests(maxAge: number = 60000): number {
-    const now = Date.now();
-    let cleanedCount = 0;
-
-    for (const [id, request] of this.pendingRequests) {
-      if (now - request.timestamp > maxAge) {
-        clearTimeout(request.timeout);
-        request.reject(new Error('Request timed out during cleanup'));
-        this.pendingRequests.delete(id);
-        cleanedCount++;
-      }
-    }
-
-    if (cleanedCount > 0) {
-      Logger.info('MCPJSONRPCClient', `Cleaned up ${cleanedCount} timed out requests`);
-    }
-
-    return cleanedCount;
+    this.pendingRequests.clear();
   }
 }
 
 /**
- * 待处理请求信息
+ * 待处理请求接口
  */
-interface PendingRequest {
-  resolve: (result: ESObject) => void;
+interface PendingRequest<T> {
+  resolve: (result: T) => void;
   reject: (error: Error) => void;
-  timeout: number;
-  method: string;
-  timestamp: number;
-}
-
-/**
- * 请求信息
- */
-interface RequestInfo {
-  id: string | number;
-  method: string;
-  age: number;
-}
-
-/**
- * JSON-RPC统计信息
- */
-interface JSONRPCStats {
-  pendingCount: number;
-  nextRequestId: number;
-  pendingRequests: Array<RequestInfo>;
 }
 
 /**
  * MCP错误类
  */
 export class MCPError extends Error {
-  code: number;
-  data?: ESObject;
+  readonly code: number;
+  readonly data?: ErrorDataType;
 
-  constructor(message: string, code: number = MCPErrorCode.INTERNAL_ERROR, data?: ESObject) {
+  constructor(message: string, code: number = MCPErrorCode.INTERNAL_ERROR, data?: ErrorDataType) {
     super(message);
     this.name = 'MCPError';
     this.code = code;
     this.data = data;
   }
 
-  /**
-   * 创建工具执行错误
-   */
-  static toolExecutionError(message: string, data?: ESObject): MCPError {
+  static toolExecutionError(message: string, data?: ErrorDataType): MCPError {
     return new MCPError(message, MCPErrorCode.TOOL_EXECUTION_ERROR, data);
   }
 
-  /**
-   * 创建资源未找到错误
-   */
-  static resourceNotFoundError(uri: string): MCPError {
-    return new MCPError(`Resource not found: ${uri}`, MCPErrorCode.RESOURCE_NOT_FOUND, { uri: uri });
+  static invalidToolError(message: string, data?: ErrorDataType): MCPError {
+    return new MCPError(message, MCPErrorCode.INVALID_TOOL, data);
   }
 
-  /**
-   * 创建无效工具错误
-   */
-  static invalidToolError(toolName: string): MCPError {
-    return new MCPError(`Invalid tool: ${toolName}`, MCPErrorCode.INVALID_TOOL, { tool: toolName });
+  static invalidResourceError(message: string, data?: ErrorDataType): MCPError {
+    return new MCPError(message, MCPErrorCode.INVALID_RESOURCE, data);
   }
 
-  /**
-   * 创建不支持操作错误
-   */
-  static unsupportedOperationError(operation: string): MCPError {
-    return new MCPError(`Unsupported operation: ${operation}`, MCPErrorCode.UNSUPPORTED_OPERATION, { operation: operation });
+  static invalidPromptError(message: string, data?: ErrorDataType): MCPError {
+    return new MCPError(message, MCPErrorCode.INVALID_PROMPT, data);
+  }
+
+  static resourceNotFoundError(message: string, data?: ErrorDataType): MCPError {
+    return new MCPError(message, MCPErrorCode.RESOURCE_NOT_FOUND, data);
+  }
+
+  static unsupportedOperationError(message: string, data?: ErrorDataType): MCPError {
+    return new MCPError(message, MCPErrorCode.UNSUPPORTED_OPERATION, data);
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code,
+      data: this.data
+    };
   }
 }
 

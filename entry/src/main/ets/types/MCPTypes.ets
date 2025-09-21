@@ -3,72 +3,93 @@
  * 基于JSON-RPC 2.0规范
  */
 
+// 基础类型
+type BaseType = string | number | boolean;
+type ComplexType = JSONSchema | Array<BaseType | JSONSchema>;
+type ParamType = Record<string, BaseType | ComplexType>;
+type ResultType = BaseType | InitializeResult | ToolCallResult | ResourceListResult | ResourceReadResult | PromptListResult | PromptGetResult;
+type ErrorDataType = BaseType | JSONRPCError | Array<BaseType | JSONRPCError>;
+
 // JSON-RPC 2.0 基础类型
-export interface JSONRPCRequest {
+interface JSONRPCRequestType<T = ParamType> {
   jsonrpc: '2.0';
   id: string | number | null;
   method: string;
-  params?: Record<string, ESObject>;
+  params?: T;
 }
 
-export interface JSONRPCResponse {
+interface JSONRPCResponseType<T = ResultType> {
   jsonrpc: '2.0';
   id: string | number | null;
-  result?: ESObject;
-  error?: JSONRPCError;
+  result?: T;
+  error?: JSONRPCErrorType;
 }
 
-export interface JSONRPCNotification {
+interface JSONRPCNotificationType<T = ParamType> {
   jsonrpc: '2.0';
   method: string;
-  params?: Record<string, ESObject>;
+  params?: T;
 }
 
-export interface JSONRPCError {
+interface JSONRPCErrorType<T = ErrorDataType> {
   code: number;
   message: string;
-  data?: ESObject;
+  data?: T;
 }
+
+export interface JSONRPCRequest<T = ParamType> extends JSONRPCRequestType<T> {}
+export interface JSONRPCResponse<T = ResultType> extends JSONRPCResponseType<T> {}
+export interface JSONRPCNotification<T = ParamType> extends JSONRPCNotificationType<T> {}
+export interface JSONRPCError<T = ErrorDataType> extends JSONRPCErrorType<T> {}
 
 // MCP核心消息类型
 export type MCPMessage = JSONRPCRequest | JSONRPCResponse | JSONRPCNotification;
 
 // MCP能力定义
-export interface ServerCapabilities {
+interface ServerCapabilitiesType {
   resources?: ResourcesCapability;
   tools?: ToolsCapability;
   prompts?: PromptsCapability;
   logging?: LoggingCapability;
 }
 
-export interface ClientCapabilities {
+interface ClientCapabilitiesType {
   sampling?: SamplingCapability;
   roots?: RootsCapability;
-  experimental?: Record<string, ESObject>;
+  experimental?: Record<string, BaseType | ComplexType>;
 }
 
-export interface ResourcesCapability {
+interface ResourcesCapabilityType {
   subscribe?: boolean;
   listChanged?: boolean;
 }
 
-export interface ToolsCapability {
+interface ToolsCapabilityType {
   listChanged?: boolean;
 }
 
-export interface PromptsCapability {
+interface PromptsCapabilityType {
   listChanged?: boolean;
 }
 
-export interface LoggingCapability {
+interface LoggingCapabilityType {
   level?: LogLevel;
 }
 
-export interface SamplingCapability {}
+interface SamplingCapabilityType {}
 
-export interface RootsCapability {
+interface RootsCapabilityType {
   listChanged?: boolean;
 }
+
+export interface ServerCapabilities extends ServerCapabilitiesType {}
+export interface ClientCapabilities extends ClientCapabilitiesType {}
+export interface ResourcesCapability extends ResourcesCapabilityType {}
+export interface ToolsCapability extends ToolsCapabilityType {}
+export interface PromptsCapability extends PromptsCapabilityType {}
+export interface LoggingCapability extends LoggingCapabilityType {}
+export interface SamplingCapability extends SamplingCapabilityType {}
+export interface RootsCapability extends RootsCapabilityType {}
 
 // 日志级别
 export enum LogLevel {
@@ -83,37 +104,37 @@ export enum LogLevel {
 }
 
 // MCP工具定义
-export interface MCPTool {
+interface MCPToolType {
   name: string;
   description?: string;
   inputSchema: JSONSchema;
 }
 
-export interface ToolResult {
+interface ToolResultType {
   content: Array<TextContent | ImageContent>;
   isError?: boolean;
 }
 
-export interface TextContent {
+interface TextContentType {
   type: 'text';
   text: string;
 }
 
-export interface ImageContent {
+interface ImageContentType {
   type: 'image';
   data: string;
   mimeType: string;
 }
 
 // MCP资源定义
-export interface MCPResource {
+interface MCPResourceType {
   uri: string;
   name: string;
   description?: string;
   mimeType?: string;
 }
 
-export interface ResourceContents {
+interface ResourceContentsType {
   uri: string;
   mimeType?: string;
   text?: string;
@@ -121,22 +142,32 @@ export interface ResourceContents {
 }
 
 // MCP提示词定义
-export interface MCPPrompt {
+interface MCPPromptType {
   name: string;
   description?: string;
   arguments?: Array<PromptArgument>;
 }
 
-export interface PromptArgument {
+interface PromptArgumentType {
   name: string;
   description?: string;
   required?: boolean;
 }
 
-export interface PromptMessage {
+interface PromptMessageType {
   role: 'user' | 'assistant';
   content: TextContent | ImageContent;
 }
+
+export interface MCPTool extends MCPToolType {}
+export interface ToolResult extends ToolResultType {}
+export interface TextContent extends TextContentType {}
+export interface ImageContent extends ImageContentType {}
+export interface MCPResource extends MCPResourceType {}
+export interface ResourceContents extends ResourceContentsType {}
+export interface MCPPrompt extends MCPPromptType {}
+export interface PromptArgument extends PromptArgumentType {}
+export interface PromptMessage extends PromptMessageType {}
 
 // JSON Schema定义
 export interface JSONSchema {
@@ -147,8 +178,8 @@ export interface JSONSchema {
   enum?: Array<string | number>;
   const?: string | number | boolean;
   description?: string;
-  default?: ESObject;
-  examples?: Array<ESObject>;
+  default?: BaseType | ComplexType;
+  examples?: Array<BaseType | ComplexType>;
   format?: string;
   pattern?: string;
   minimum?: number;
@@ -174,7 +205,7 @@ export enum MCPTransportType {
   HTTP_SSE = 'http_sse'
 }
 
-export interface MCPServerConfig {
+interface MCPServerConfigType {
   name: string;
   description?: string;
   transportType: MCPTransportType;
@@ -186,7 +217,7 @@ export interface MCPServerConfig {
   retryAttempts?: number;
 }
 
-export interface MCPConnectionState {
+interface MCPConnectionStateType {
   connected: boolean;
   connecting: boolean;
   error?: string;
@@ -195,11 +226,15 @@ export interface MCPConnectionState {
   capabilities?: ServerCapabilities;
 }
 
-export interface ServerInfo {
+interface ServerInfoType {
   name: string;
   version: string;
   protocolVersion: string;
 }
+
+export interface MCPServerConfig extends MCPServerConfigType {}
+export interface MCPConnectionState extends MCPConnectionStateType {}
+export interface ServerInfo extends ServerInfoType {}
 
 // MCP消息类型枚举
 export enum MCPMessageType {
@@ -233,31 +268,39 @@ export enum MCPMessageType {
 }
 
 // 初始化消息
-export interface InitializeRequest {
-  protocolVersion: string;
-  capabilities: ClientCapabilities;
-  clientInfo: {
-    name: string;
-    version: string;
-  };
+interface ClientInfoType {
+  name: string;
+  version: string;
 }
 
-export interface InitializeResult {
+interface InitializeRequestType {
+  protocolVersion: string;
+  capabilities: ClientCapabilities;
+  clientInfo: ClientInfoType;
+}
+
+interface InitializeResultType {
   protocolVersion: string;
   capabilities: ServerCapabilities;
   serverInfo: ServerInfo;
 }
 
+export interface InitializeRequest extends InitializeRequestType {}
+export interface InitializeResult extends InitializeResultType {}
+
 // 工具调用
-export interface ToolCallRequest {
+interface ToolCallRequestType {
   name: string;
-  arguments?: Record<string, ESObject>;
+  arguments?: ParamType;
 }
 
-export interface ToolCallResult {
+interface ToolCallResultType {
   content: Array<TextContent | ImageContent>;
   isError?: boolean;
 }
+
+export interface ToolCallRequest extends ToolCallRequestType {}
+export interface ToolCallResult extends ToolCallResultType {}
 
 // 资源请求
 export interface ResourceListRequest {
@@ -323,34 +366,25 @@ export enum MCPErrorCode {
 }
 
 // MCP客户端状态
-export interface MCPClientState {
+interface MCPClientStateType {
   servers: Map<string, MCPConnectionState>;
   availableTools: Map<string, MCPTool>;
   availableResources: Map<string, MCPResource>;
   availablePrompts: Map<string, MCPPrompt>;
 }
 
-// 事件监听器类型
-export type MCPEventListener = (event: MCPEvent) => void;
+export interface MCPClientState extends MCPClientStateType {}
 
-export interface MCPEvent {
+// 事件监听器类型
+interface MCPEventType {
   type: string;
   serverId: string;
-  data?: ESObject;
+  data?: BaseType | JSONRPCError | Array<BaseType | JSONRPCError>;
   timestamp: number;
 }
 
-// 导出所有类型
-export {
-  MCPTool,
-  MCPResource,
-  MCPPrompt,
-  MCPServerConfig,
-  MCPConnectionState,
-  MCPClientState,
-  MCPMessage,
-  JSONRPCRequest,
-  JSONRPCResponse,
-  JSONRPCNotification,
-  JSONRPCError
-};
+export interface MCPEvent extends MCPEventType {}
+export type MCPEventListener = (event: MCPEvent) => void;
+
+// 导出需要的类型
+export type { ParamType };
