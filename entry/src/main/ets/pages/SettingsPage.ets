@@ -353,12 +353,6 @@ struct SettingsPage {
   private getVoiceSettings(): SettingItem[] {
     return [
       {
-        title: '立刻静音',
-        subtitle: this.autoTTSSettings.muted ? '已静音，不会自动播放' : '正常播放模式',
-        type: 'switch',
-        value: this.autoTTSSettings.muted
-      },
-      {
         title: '收到回复时播放',
         subtitle: this.autoTTSSettings.autoPlayOnReceive ? '收到AI回复时自动播放' : '需要手动点击播放',
         type: 'switch',
@@ -579,8 +573,6 @@ struct SettingsPage {
               } else if (item.title === 'API调用模式') {
                 Logger.info('SettingsPage', `用户手动切换API模式: ${isOn ? '直连' : '服务器代理'}`);
                 await this.handleAPIModeChange(isOn, true); // true表示手动切换
-              } else if (item.title === '立刻静音') {
-                await this.updateAutoTTSSetting('muted', isOn);
               } else if (item.title === '收到回复时播放') {
                 await this.updateAutoTTSSetting('autoPlayOnReceive', isOn);
               }
@@ -1056,8 +1048,6 @@ struct SettingsPage {
         return this.useModernMessageLayout;
       case 'API调用模式':
         return this.currentAPIMode === APIMode.DIRECT_CALL;
-      case '立刻静音':
-        return this.autoTTSSettings.muted;
       case '收到回复时播放':
         return this.autoTTSSettings.autoPlayOnReceive;
       default:
