@@ -11,7 +11,7 @@ import { VoiceInputComponent, VoiceRecognitionState, InputMode, VoiceOverlayHint
 import { SmartTextRenderer } from '../components/SmartTextRenderer';
 import { DeepThinkingDialog } from '../components/DeepThinkingDialog';
 import { SearchDetailsDialog } from '../components/SearchDetailsDialog';
-import { DeepThinkingIndicator } from '../components/DeepThinkingIndicator';
+import { DeepThinkingStatusCard } from '../components/DeepThinkingStatusCard';
 import { ToolType } from '../types/ToolboxTypes';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { ThemeManager } from '../utils/ThemeManager';
@@ -1085,29 +1085,16 @@ struct ChatPage {
             .width('100%')
             .margin({ bottom: 4 })
             
+            this.buildDeepThinkingInlineStatus(message, '70%')
+            
             // 消息内容气泡
-            Column() {
-              if (message.isLoading) {
-                this.buildLoadingStatus(this.enableDeepThinking ? '🧠 AI正在深度分析，请稍候...' : 'AI正在思考...')
-              } else if (message.toolStatus === 'calling') {
-                this.buildLoadingStatus('🔍 正在搜索网络信息...', true)
-              } else {
-                Column() {
-                  // 深度思考指示器（传统布局）
-                  if (message.isDeepThinking && message.thinkingStatus && message.thinkingStatus !== ThinkingStatus.IDLE) {
-                    DeepThinkingIndicator({
-                      message: message,
-                      compact: true,
-                      onTap: () => {
-                        this.showDeepThinkingDialog(message);
-                      },
-                      onStop: () => {
-                        this.chatViewModel.stopDeepThinking(message.id);
-                      }
-                    })
-                      .margin({ bottom: 8 })
-                  }
-                  
+          Column() {
+            if (message.isLoading) {
+              this.buildLoadingStatus(this.enableDeepThinking ? '🧠 AI正在深度分析，请稍候...' : 'AI正在思考...')
+            } else if (message.toolStatus === 'calling') {
+              this.buildLoadingStatus('🔍 正在搜索网络信息...', true)
+            } else {
+              Column() {
                   // 消息内容
                   Text(message.content.trim())
                     .fontSize(this.fontSettings.chatFontSize)
@@ -1195,6 +1182,26 @@ struct ChatPage {
   }
 
   @Builder
+  private buildDeepThinkingInlineStatus(message: Message, maxWidth: string) {
+    if (!message.isDeepThinking) {
+      Blank();
+    } else {
+      DeepThinkingStatusCard({
+        message: message,
+        onShowDetails: () => {
+          this.showDeepThinkingDialog(message);
+        },
+        onStop: () => {
+          this.chatViewModel.stopDeepThinking(message.id);
+        }
+      })
+        .constraintSize({ maxWidth: maxWidth })
+        .width(maxWidth)
+        .margin({ bottom: 8 })
+    }
+  }
+
+  @Builder
   buildModernMessageItem(message: Message) {
     Column() {
       // 消息头部：角色 + 头像
@@ -1276,30 +1283,16 @@ struct ChatPage {
           }
           .width('100%')
         } else {
-          // AI消息内容 - 左对齐
+          // AI消息内容
           Row() {
             Column() {
+              this.buildDeepThinkingInlineStatus(message, '80%')
               if (message.isLoading) {
                 this.buildLoadingStatus(this.enableDeepThinking ? '🧠 AI正在深度分析，请稍候...' : 'AI正在思考...')
               } else if (message.toolStatus === 'calling') {
                 this.buildLoadingStatus('🔍 正在搜索网络信息...', true)
               } else {
                 Column() {
-                  // 深度思考指示器
-                  if (message.isDeepThinking && message.thinkingStatus && message.thinkingStatus !== ThinkingStatus.IDLE) {
-                    DeepThinkingIndicator({
-                      message: message,
-                      compact: true,
-                      onTap: () => {
-                        this.showDeepThinkingDialog(message);
-                      },
-                      onStop: () => {
-                        this.chatViewModel.stopDeepThinking(message.id);
-                      }
-                    })
-                      .margin({ bottom: 8 })
-                  }
-                  
                   // 智能渲染的消息内容
                   SmartTextRenderer({ content: message.content.trim() })
                   
