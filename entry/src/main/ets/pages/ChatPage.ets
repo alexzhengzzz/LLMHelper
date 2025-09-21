@@ -873,10 +873,6 @@ struct ChatPage {
           inactiveColor: $r('app.color.text_primary')
         })
 
-        this.buildNavigationIcon('⚙️', () => {
-          router.pushUrl({ url: 'pages/SettingsPage' });
-        })
-
         this.buildNavigationIcon('⚡', () => {
           if (this.showToolboxPanel) {
             this.hideToolboxPanel();
@@ -893,6 +889,10 @@ struct ChatPage {
           this.buildModelSelectorButton()
         }
         .alignItems(VerticalAlign.Center)
+
+        this.buildNavigationIcon('⋮', () => {
+          router.pushUrl({ url: 'pages/SettingsPage' });
+        })
       }
       .alignItems(VerticalAlign.Center)
     }
@@ -1390,14 +1390,54 @@ struct ChatPage {
         })
 
         Blank()
+          .layoutWeight(1)
+
+        // 工具箱入口按钮
+        Button() {
+          Row({ space: 6 }) {
+            Text('🧰')
+              .fontSize(14)
+            Text('工具')
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.primary_color'))
+          }
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+        }
+        .height(32)
+        .padding({ left: 14, right: 14 })
+        .backgroundColor('rgba(116, 185, 255, 0.18)')
+        .borderRadius(16)
+        .border({
+          width: 1,
+          color: '#74B9FF'
+        })
+        .stateStyles({
+          normal: {
+            .scale({ x: 1.0, y: 1.0 })
+          },
+          pressed: {
+            .scale({ x: 0.95, y: 0.95 })
+          }
+        })
+        .animation({
+          duration: 150,
+          curve: Curve.EaseInOut
+        })
+        .onClick(() => {
+          this.showToolboxPanelMethod();
+        })
       }
       .width('95%')
       .margin({ left: 16, right: 16, bottom: 4 })
 
       // 当前会话绑定的系统提示词展示区域（只读）
-      Column() {
-        this.buildCurrentSessionPromptDisplay()
-      }.borderRadius(20).clip(true).border({color: Color.Orange, width: 1}).width('95%')
+      // Column() {
+      //   this.buildCurrentSessionPromptDisplay()
+      // }
+      // .width('95%')
+      // .margin({ left: 16, right: 16, bottom: 4 })
       
       // 主要输入区域容器 - 整体移动
       Column() {
@@ -2354,93 +2394,25 @@ struct ChatPage {
    */
   @Builder
   buildCurrentSessionPromptDisplay() {
-    // 始终显示角色，如果没有系统提示词则显示"无"
-    Row() {
-      // 角色信息
-      Row({ space: 6 }) {
-        Text('🎭')
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
-        
-        Text(this.chatViewModel.getCurrentSessionSystemPrompt() ? this.chatViewModel.getCurrentSessionSystemPrompt()?.name : '无')
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .constraintSize({ maxWidth: 120 })
-      }
-      .layoutWeight(1)
-      .alignItems(VerticalAlign.Center)
+    Row({ space: 8 }) {
+      // 使用图标+状态点简化展示
+      Text('🎭')
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
 
-      // 更多功能按钮
-      Button() {
-        Text('+')
-          .fontSize(20)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
-      }
-      .width(36)
-      .height(36)
-      .backgroundColor('#74B9FF')
-      .borderRadius(18)
-      .margin({ left: 4, right: 4 })
-      .stateStyles({
-        normal: {
-          .scale({ x: 1.0, y: 1.0 })
-        },
-        pressed: {
-          .scale({ x: 0.95, y: 0.95 })
-        }
-      })
-      .animation({
-        duration: 150,
-        curve: Curve.EaseInOut
-      })
-      .onClick(() => {
-        this.showToolboxPanelMethod();
-      })
+      Circle()
+        .width(8)
+        .height(8)
+        .fill(this.chatViewModel.getCurrentSessionSystemPrompt() ? '#74B9FF' : '#BDBDBD')
+        .opacity(this.chatViewModel.getCurrentSessionSystemPrompt() ? 1.0 : 0.6)
 
-      // 管理按钮
-      Button() {
-        Text('✏️')
-          .fontSize(18)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
-      }
-      .width(36)
-      .height(36)
-      .backgroundColor('#95A5A6')
-      .borderRadius(18)
-      .margin({ left: 4, right: 4 })
-      .stateStyles({
-        normal: {
-          .scale({ x: 1.0, y: 1.0 })
-        },
-        pressed: {
-          .scale({ x: 0.95, y: 0.95 })
-        }
-      })
-      .animation({
-        duration: 150,
-        curve: Curve.EaseInOut
-      })
-      .onClick(() => {
-        router.pushUrl({ 
-          url: 'pages/SystemPromptManagerPage',
-          params: { 
-            fromChatPage: true,
-            currentSessionId: this.chatViewModel.currentSession?.id || null
-          }
-        });
-      })
+      Blank()
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 4, bottom: 2 })
     .backgroundColor($r('app.color.card_background'))
     .borderRadius(16)
     .clip(true)
-    .margin({ left: 16, right: 16, bottom: 4 })
   }
 
 
@@ -2642,6 +2614,25 @@ struct ChatPage {
         }
       },
       {
+        id: 'system_prompt_manager',
+        title: '管理提示词',
+        description: '调整系统提示词与角色设定',
+        icon: '✏️',
+        color: '#0984E3',
+        backgroundColor: 'rgba(9, 132, 227, 0.1)',
+        enabled: true,
+        action: () => {
+          Logger.info('ChatPage', '跳转到系统提示词管理页面');
+          router.pushUrl({
+            url: 'pages/SystemPromptManagerPage',
+            params: {
+              fromChatPage: true,
+              currentSessionId: this.chatViewModel.currentSession?.id || null
+            }
+          });
+        }
+      },
+      {
         id: 'settings',
         title: '设置',
         description: '应用设置和个性化配置',
@@ -2723,8 +2714,8 @@ struct ChatPage {
         }
         Logger.info('ChatPage', `工具动作执行完成: ${item.id}`);
         
-        // 执行成功后显示提示（设置按钮除外）
-        if (item.id !== 'settings') {
+        // 执行成功后显示提示（跳转类按钮除外）
+        if (item.id !== 'settings' && item.id !== 'system_prompt_manager') {
           promptAction.showToast({
             message: `${item.title}操作成功`,
             duration: 1500
@@ -2733,7 +2724,7 @@ struct ChatPage {
       } catch (error) {
         Logger.error('ChatPage', `工具执行异常: ${item.id}, 错误: ${error}`);
         // 设置按钮除外，显示错误提示
-        if (item.id !== 'settings') {
+        if (item.id !== 'settings' && item.id !== 'system_prompt_manager') {
           promptAction.showToast({
             message: `${item.title}操作失败`,
             duration: 1500

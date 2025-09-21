@@ -8,6 +8,7 @@ import { Logger } from '../utils/Logger';
 import { AppConfigManager } from '../utils/AppConfigManager';
 import { ServerConfigManager, ServerEndpoint } from '../utils/ServerConfigManager';
 import { ThemeManager } from '../utils/ThemeManager';
+import { BasicAnimations, AnimationConfigManager } from '../animations';
 import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 
@@ -75,7 +76,12 @@ struct SettingsPage {
     protocol: 'http',
     wsProtocol: 'ws'
   };
-      private autoTTSService: AutoTTSService = AutoTTSService.getInstance();
+  private readonly PAGE_ENTER_OFFSET: number = 96;
+  @Local private pageTranslateX: number = this.PAGE_ENTER_OFFSET;
+  @Local private pageOpacity: number = BasicAnimations.HIDDEN_OPACITY;
+  private hasPlayedEnterAnimation: boolean = false;
+  private animationConfigManager: AnimationConfigManager = AnimationConfigManager.getInstance();
+  private autoTTSService: AutoTTSService = AutoTTSService.getInstance();
   private apiManager: APIManager = APIManager.getInstance();
   private userProfileManager: UserProfileManager = UserProfileManager.getInstance();
   private serverConfigManager: ServerConfigManager = ServerConfigManager.getInstance();
@@ -107,6 +113,7 @@ struct SettingsPage {
 
   async aboutToAppear(): Promise<void> {
     Logger.info('SettingsPage', 'aboutToAppear');
+    this.resetEnterAnimationState();
     
     // 加载自动播报设置
     try {
@@ -195,6 +202,7 @@ struct SettingsPage {
 
   async onPageShow(): Promise<void> {
     Logger.info('SettingsPage', '页面显示，重新加载设置状态');
+    this.playEnterTransition();
     
     // 重新加载消息布局偏好，确保显示最新状态
     try {
@@ -252,6 +260,30 @@ struct SettingsPage {
   // 头像设置变化监听器
   onAvatarSettingsChanged(): void {
     // 头像设置变化时自动触发，@Computed属性会自动重新计算
+  }
+
+  private resetEnterAnimationState(): void {
+    this.pageTranslateX = this.PAGE_ENTER_OFFSET;
+    this.pageOpacity = BasicAnimations.HIDDEN_OPACITY;
+    this.hasPlayedEnterAnimation = false;
+  }
+
+  private playEnterTransition(): void {
+    if (this.hasPlayedEnterAnimation) {
+      return;
+    }
+
+    this.hasPlayedEnterAnimation = true;
+    const duration = this.animationConfigManager.getDuration(BasicAnimations.STANDARD_DURATION);
+    const curve = this.animationConfigManager.getCurve();
+
+    animateTo({
+      duration,
+      curve
+    }, () => {
+      this.pageTranslateX = 0;
+      this.pageOpacity = BasicAnimations.STANDARD_OPACITY;
+    });
   }
 
   private getServerSettings(): SettingItem[] {
@@ -403,6 +435,8 @@ struct SettingsPage {
       // 设置选项列表
       this.buildSettingsList()
     }
+    .translate({ x: this.pageTranslateX, y: 0 })
+    .opacity(this.pageOpacity)
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.background_color'))
