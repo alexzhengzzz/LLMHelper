@@ -20,6 +20,19 @@ export enum AIProvider {
 export interface ChatMessage {
   role: string;
   content: string;
+  tool_calls?: ToolCall[]; // 工具调用列表
+}
+
+// 工具调用接口
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: ToolCallFunction;
+}
+
+export interface ToolCallFunction {
+  name: string;
+  arguments: string; // JSON字符串格式的参数
 }
 
 // 聊天请求接口

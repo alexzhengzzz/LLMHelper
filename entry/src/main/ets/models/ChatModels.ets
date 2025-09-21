@@ -3,7 +3,7 @@
  */
 
 // 导入通用工具类型
-import { Tool, ParameterProperty } from '../types/APITypes';
+import { Tool, ParameterProperty, ToolCall } from '../types/APITypes';
 
 // 消息类型枚举
 export enum MessageRole {
@@ -248,7 +248,7 @@ export interface SearchResponse {
 export type ToolType = 'function';
 
 // 重新导出工具类型，保持兼容性
-export { Tool, ParameterProperty };
+export { Tool, ParameterProperty, ToolCall };
 
 // 参数定义
 export interface ParametersDefinition {
@@ -264,13 +264,7 @@ export interface ToolFunction {
   parameters: ParametersDefinition;
 }
 
-// 工具调用
-export interface ToolCall {
-  id: string;
-  type: ToolType;
-  function: ToolCallFunction;
-}
-
+// 保留兼容性的类型别名
 export interface ToolCallFunction {
   name: string;
   arguments: string; // JSON字符串

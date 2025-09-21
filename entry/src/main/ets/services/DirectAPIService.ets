@@ -3,18 +3,21 @@
  * 管理多个AI厂商的直接连接
  */
 
-import { ChatRequest, ChatResponse, AIProvider, ServiceStats } from '../types/APITypes';
+import { ChatRequest, ChatResponse, AIProvider, ServiceStats, Tool } from '../types/APITypes';
 import { GLMClient } from '../clients/GLMClient';
 import { SiliconFlowClient } from '../clients/SiliconFlowClient';
 import { BaseAPIClient } from '../clients/BaseAPIClient';
 import { Logger } from '../utils/Logger';
 import { APIKeyManager } from '../utils/APIKeyManager';
 import { IDirectAPIService } from '../di/ServiceInterfaces';
+import { LocalToolManager } from './LocalToolManager';
+import { MCPTool, ToolCallRequest, ToolCallResult, ParamType } from '../types/MCPTypes';
 // import { GeminiClient } from '../clients/GeminiClient'; // 已禁用 - 暂不可用
 
 export class DirectAPIService implements IDirectAPIService {
   private clients: Map<AIProvider, BaseAPIClient>;
   private apiKeyManager: APIKeyManager;
+  private localToolManager: LocalToolManager | null = null;
   
   constructor(apiKeys?: Map<AIProvider, string>) {
     this.clients = new Map<AIProvider, BaseAPIClient>();
@@ -349,10 +352,219 @@ export class DirectAPIService implements IDirectAPIService {
   }
   
   /**
+   * 获取可用的工具列表
+   */
+  getAvailableTools(): Array<MCPTool> {
+    if (!this.localToolManager) {
+      Logger.warn('DirectAPIService', 'LocalToolManager未初始化，返回空工具列表');
+      return [];
+    }
+    return this.localToolManager.getAvailableTools();
+  }
+
+  /**
+   * 检查工具是否存在
+   */
+  hasTool(toolName: string): boolean {
+    if (!this.localToolManager) {
+      Logger.warn('DirectAPIService', 'LocalToolManager未初始化，工具检查失败');
+      return false;
+    }
+    return this.localToolManager.hasTool(toolName);
+  }
+
+  /**
+   * 执行工具调用
+   */
+  async executeToolCall(request: ToolCallRequest): Promise<ToolCallResult> {
+    if (!this.localToolManager) {
+      Logger.error('DirectAPIService', 'LocalToolManager未初始化，无法执行工具调用');
+      const errorResult: ToolCallResult = {
+        content: [{
+          type: 'text',
+          text: 'LocalToolManager未初始化，无法执行工具调用'
+        }],
+        isError: true
+      };
+      return errorResult;
+    }
+
+    Logger.info('DirectAPIService', `执行工具调用: ${request.name}`);
+    Logger.debug('DirectAPIService', `工具参数: ${JSON.stringify(request.arguments)}`);
+
+    try {
+      const result = await this.localToolManager.executeTool(request);
+      Logger.info('DirectAPIService', `工具调用完成: ${request.name}`);
+      return result;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      Logger.error('DirectAPIService', `工具调用失败: ${request.name}, 错误: ${errorMessage}`);
+
+      const errorResult: ToolCallResult = {
+        content: [{
+          type: 'text',
+          text: `工具调用失败: ${errorMessage}`
+        }],
+        isError: true
+      };
+      return errorResult;
+    }
+  }
+
+  /**
+   * 转换MCP工具为API工具格式
+   */
+  convertMCPToolToAPITool(mcpTool: MCPTool): Tool {
+    // 转换JSONSchema properties为ParameterProperty格式
+    const convertedProperties: Record<string, import('../types/APITypes').ParameterProperty> = {};
+
+    if (mcpTool.inputSchema.properties) {
+      const schemaProperties = mcpTool.inputSchema.properties as Record<string, import('../types/MCPTypes').JSONSchema>;
+      Object.keys(schemaProperties).forEach(key => {
+        const schemaProp = schemaProperties[key];
+        convertedProperties[key] = {
+          type: schemaProp.type || 'string',
+          description: schemaProp.description,
+          enum: schemaProp.enum as string[] | undefined
+        };
+      });
+    }
+
+    const apiTool: Tool = {
+      type: 'function',
+      function: {
+        name: mcpTool.name,
+        description: mcpTool.description || '',
+        parameters: {
+          type: 'object',
+          properties: convertedProperties,
+          required: mcpTool.inputSchema.required || []
+        }
+      }
+    };
+    return apiTool;
+  }
+
+  /**
+   * 获取所有工具的API格式列表
+   */
+  getAPIToolsFormat(): Array<Tool> {
+    const mcpTools = this.getAvailableTools();
+    return mcpTools.map(tool => this.convertMCPToolToAPITool(tool));
+  }
+
+  /**
+   * 为聊天请求添加工具支持
+   */
+  async sendChatRequestWithTools(request: ChatRequest, provider: AIProvider, includeTools: boolean = true): Promise<ChatResponse> {
+    try {
+      // 如果启用工具且有可用工具，添加工具定义
+      if (includeTools && this.localToolManager) {
+        const availableTools = this.getAPIToolsFormat();
+        if (availableTools.length > 0) {
+          request.tools = availableTools;
+          request.tool_choice = 'auto'; // 让AI自动选择是否使用工具
+          Logger.info('DirectAPIService', `为聊天请求添加了 ${availableTools.length} 个工具`);
+        }
+      }
+
+      return await this.sendChatRequest(request, provider);
+
+    } catch (error) {
+      const errorMessage = (error as Error).message;
+      Logger.error('DirectAPIService', `带工具的聊天请求失败: ${errorMessage}`);
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * 处理工具调用响应并执行工具
+   */
+  async processToolCallsInResponse(response: ChatResponse): Promise<ChatResponse> {
+    try {
+      // 检查响应中是否有工具调用
+      if (!response.choices || response.choices.length === 0) {
+        return response;
+      }
+
+      const firstChoice = response.choices[0];
+      if (!firstChoice.message.tool_calls || firstChoice.message.tool_calls.length === 0) {
+        Logger.info('DirectAPIService', '响应中无工具调用，直接返回');
+        return response;
+      }
+
+      Logger.info('DirectAPIService', `响应中发现 ${firstChoice.message.tool_calls.length} 个工具调用`);
+
+      // 执行所有工具调用
+      const toolResults: ToolCallResult[] = [];
+      for (const toolCall of firstChoice.message.tool_calls) {
+        if (toolCall.type === 'function') {
+          try {
+            Logger.info('DirectAPIService', `执行工具: ${toolCall.function.name}`);
+
+            // 解析参数
+            let args: ParamType = {};
+            try {
+              args = JSON.parse(toolCall.function.arguments) as ParamType;
+            } catch (parseError) {
+              Logger.warn('DirectAPIService', `工具参数解析失败: ${parseError}`);
+            }
+
+            const toolRequest: ToolCallRequest = {
+              name: toolCall.function.name,
+              arguments: args
+            };
+
+            const toolResult = await this.executeToolCall(toolRequest);
+            toolResults.push(toolResult);
+
+            Logger.info('DirectAPIService', `工具 ${toolCall.function.name} 执行完成`);
+
+          } catch (error) {
+            Logger.error('DirectAPIService', `工具 ${toolCall.function.name} 执行失败: ${error}`);
+            const errorResult: ToolCallResult = {
+              content: [{
+                type: 'text',
+                text: `工具执行失败: ${error instanceof Error ? error.message : '未知错误'}`
+              }],
+              isError: true
+            };
+            toolResults.push(errorResult);
+          }
+        }
+      }
+
+      // 将工具执行结果添加到响应状态
+      response.tool_status = toolResults.some(result => result.isError) ? 'failed' : 'completed';
+
+      Logger.info('DirectAPIService', `所有工具调用处理完成，状态: ${response.tool_status}`);
+      return response;
+
+    } catch (error) {
+      Logger.error('DirectAPIService', `处理工具调用失败: ${error}`);
+      response.tool_status = 'failed';
+      return response;
+    }
+  }
+
+  /**
+   * 初始化本地工具管理器
+   */
+  initializeLocalToolManager(context: import('@kit.AbilityKit').common.UIAbilityContext): void {
+    try {
+      this.localToolManager = LocalToolManager.getInstance(context);
+      Logger.info('DirectAPIService', 'LocalToolManager初始化完成');
+    } catch (error) {
+      Logger.error('DirectAPIService', `LocalToolManager初始化失败: ${error}`);
+    }
+  }
+
+  /**
    * 销毁服务
    */
   destroy(): void {
     this.clients.clear();
+    this.localToolManager = null;
     Logger.info('DirectAPIService', '直连API服务已销毁');
   }
 }

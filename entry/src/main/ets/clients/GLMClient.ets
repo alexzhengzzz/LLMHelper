@@ -22,8 +22,28 @@ class GLMResponseParser implements ResponseParser<GLMResponse> {
   private static readonly MODELS_ENDPOINT = '/api/paas/v4/models';
   
   parse(responseData: string): ChatResponse {
+    Logger.info('GLMResponseParser', `=== GLM响应解析 ===`);
+    Logger.info('GLMResponseParser', `原始响应数据: ${responseData}`);
+
     const jsonResponse = JSON.parse(responseData) as GLMResponse;
-    
+
+    Logger.info('GLMResponseParser', `解析后的响应: ${JSON.stringify(jsonResponse, null, 2)}`);
+    Logger.info('GLMResponseParser', `选择数量: ${jsonResponse.choices?.length || 0}`);
+
+    if (jsonResponse.choices && jsonResponse.choices.length > 0) {
+      const firstChoice = jsonResponse.choices[0];
+      Logger.info('GLMResponseParser', `第一个选择的消息: ${JSON.stringify(firstChoice.message, null, 2)}`);
+
+      if (firstChoice.message.tool_calls) {
+        Logger.info('GLMResponseParser', `=== 发现工具调用 ===`);
+        Logger.info('GLMResponseParser', `工具调用数量: ${firstChoice.message.tool_calls.length}`);
+        Logger.info('GLMResponseParser', `工具调用详情: ${JSON.stringify(firstChoice.message.tool_calls, null, 2)}`);
+      } else {
+        Logger.info('GLMResponseParser', `=== 无工具调用 ===`);
+        Logger.info('GLMResponseParser', `消息内容: ${firstChoice.message.content}`);
+      }
+    }
+
     return {
       id: jsonResponse.id,
       object: jsonResponse.object,
@@ -236,9 +256,22 @@ export class GLMClient extends BaseAPIClient {
     if (request.tools && request.tools.length > 0) {
       glmRequest.tools = request.tools;
       glmRequest.tool_choice = request.tool_choice || 'auto';
+      Logger.info('GLMClient', `=== 工具发送详情 ===`);
+      Logger.info('GLMClient', `工具数量: ${request.tools.length}`);
+      Logger.info('GLMClient', `工具列表: ${JSON.stringify(request.tools, null, 2)}`);
+      Logger.info('GLMClient', `工具选择策略: ${glmRequest.tool_choice}`);
+    } else {
+      Logger.info('GLMClient', '=== 无工具发送 ===');
+      Logger.info('GLMClient', `request.tools: ${request.tools}`);
+      Logger.info('GLMClient', `tools length: ${request.tools?.length || 0}`);
     }
 
-    return JSON.stringify(glmRequest);
+    const requestBodyStr = JSON.stringify(glmRequest);
+    Logger.info('GLMClient', `=== 完整请求体 ===`);
+    Logger.info('GLMClient', `请求体大小: ${requestBodyStr.length} 字符`);
+    Logger.info('GLMClient', `请求体内容: ${requestBodyStr}`);
+
+    return requestBodyStr;
   }
   
     

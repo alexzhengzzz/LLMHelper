@@ -93,6 +93,19 @@ interface ToolCallMessage {
   tool_calls?: ToolCall[];
 }
 
+/**
+ * 工具信息类
+ */
+class ToolInfo {
+  name: string;
+  description: string;
+
+  constructor(name: string, description: string) {
+    this.name = name;
+    this.description = description;
+  }
+}
+
 
 export class HybridChatService {
   private static instance: HybridChatService;
@@ -115,10 +128,24 @@ export class HybridChatService {
    */
   private initializeToolManager(): void {
     try {
+      Logger.info('HybridChatService', '=== 开始初始化工具管理器 ===');
       const context = AppContext.getInstance().getContext();
+      Logger.info('HybridChatService', `AppContext: ${context ? '已获取' : '未获取'}`);
+
       if (context) {
         this.localToolManager = LocalToolManager.getInstance(context);
-        Logger.info('HybridChatService', 'LocalToolManager initialized successfully');
+        Logger.info('HybridChatService', 'LocalToolManager 实例创建成功');
+
+        // 立即检查工具数量
+        const toolCount = this.localToolManager.getAvailableTools().length;
+        Logger.info('HybridChatService', `LocalToolManager 包含 ${toolCount} 个工具`);
+
+        if (toolCount > 0) {
+          const toolNames = this.localToolManager.getAvailableTools().map(t => t.name);
+          Logger.info('HybridChatService', `工具列表: ${toolNames.join(', ')}`);
+        } else {
+          Logger.warn('HybridChatService', 'LocalToolManager 没有可用工具');
+        }
       } else {
         Logger.warn('HybridChatService', 'App context not available, tools disabled');
       }
@@ -204,9 +231,19 @@ export class HybridChatService {
       // 第四步：构建ChatRequest（支持Function Calling）
       let chatRequest: ChatRequest;
 
+      Logger.info('HybridChatService', `=== 工具启用检查 ===`);
+      Logger.info('HybridChatService', `request.enableTools: ${request.enableTools}`);
+      Logger.info('HybridChatService', `this.localToolManager: ${this.localToolManager ? '已初始化' : '未初始化'}`);
+
       if (request.enableTools && this.localToolManager) {
+        Logger.info('HybridChatService', `=== 开始获取工具 ===`);
+
         // 使用Function Calling
         const tools = this.getAvailableTools();
+
+        Logger.info('HybridChatService', `获取到的工具数量: ${tools.length}`);
+        Logger.info('HybridChatService', `工具详情: ${JSON.stringify(tools, null, 2)}`);
+
         const fcRequest: FunctionCallingChatRequest = {
           model: request.model,
           messages: [
@@ -230,7 +267,7 @@ export class HybridChatService {
           tool_choice: 'auto' // 设置工具选择策略
         };
 
-        Logger.info('HybridChatService', `已添加 ${tools.length} 个工具到请求中`);
+        Logger.info('HybridChatService', `=== 已添加 ${tools.length} 个工具到请求中 ===`);
       } else {
         // 普通聊天请求
         chatRequest = {
@@ -527,11 +564,19 @@ export class HybridChatService {
    * 获取可用工具列表
    */
   private getAvailableTools(): Tool[] {
+    Logger.info('HybridChatService', `=== getAvailableTools 开始 ===`);
+
     if (!this.localToolManager) {
+      Logger.error('HybridChatService', 'localToolManager 未初始化');
       return [];
     }
 
+    Logger.info('HybridChatService', 'localToolManager 已初始化，开始获取MCP工具');
     const mcpTools = this.localToolManager.getAvailableTools();
+    Logger.info('HybridChatService', `从LocalToolManager获取到 ${mcpTools.length} 个MCP工具`);
+    const toolInfo: ToolInfo[] = mcpTools.map(t => new ToolInfo(t.name, t.description || '无描述'));
+    Logger.info('HybridChatService', `MCP工具列表: ${JSON.stringify(toolInfo, null, 2)}`);
+
     const tools: Tool[] = [];
 
     for (const mcpTool of mcpTools) {
@@ -570,6 +615,7 @@ export class HybridChatService {
         }
       };
       tools.push(tool);
+      Logger.info('HybridChatService', `转换工具: ${mcpTool.name} -> ${tool.function.name}`);
     }
 
     const toolNames: string[] = [];
@@ -578,7 +624,9 @@ export class HybridChatService {
         toolNames.push(tool.function.name);
       }
     }
+    Logger.info('HybridChatService', `=== getAvailableTools 完成 ===`);
     Logger.info('HybridChatService', `获取到 ${tools.length} 个可用工具: ${toolNames.join(', ')}`);
+    Logger.info('HybridChatService', `完整工具定义: ${JSON.stringify(tools, null, 2)}`);
     return tools;
   }
 

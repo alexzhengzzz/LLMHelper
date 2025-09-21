@@ -3,9 +3,10 @@
  * 定义服务层的抽象接口，实现依赖倒置原则
  */
 
-import { ChatRequest, ChatResponse, AIProvider, ConnectionTestResult, ServiceStats, APIMode, APIManagerState } from '../types/APITypes';
+import { ChatRequest, ChatResponse, AIProvider, ConnectionTestResult, ServiceStats, APIMode, APIManagerState, Tool } from '../types/APITypes';
 import { ChatRequest as LegacyChatRequest, SimpleMessage, ChatResponse as LegacyChatResponse, ExecuteRequest, ExecuteResponse, ProvidersResponse } from '../models/ChatModels';
 import { APIKeyConfig, ProviderInfo, APIKeyValidationResult } from '../types/APIKeyTypes';
+import { MCPTool, ToolCallRequest, ToolCallResult } from '../types/MCPTypes';
 
 /**
  * 直连API服务接口
@@ -55,7 +56,47 @@ export interface IDirectAPIService {
    * 获取服务统计
    */
   getServiceStats(): ServiceStats;
-  
+
+  /**
+   * 获取可用的工具列表
+   */
+  getAvailableTools(): Array<MCPTool>;
+
+  /**
+   * 检查工具是否存在
+   */
+  hasTool(toolName: string): boolean;
+
+  /**
+   * 执行工具调用
+   */
+  executeToolCall(request: ToolCallRequest): Promise<ToolCallResult>;
+
+  /**
+   * 转换MCP工具为API工具格式
+   */
+  convertMCPToolToAPITool(mcpTool: MCPTool): Tool;
+
+  /**
+   * 获取所有工具的API格式列表
+   */
+  getAPIToolsFormat(): Array<Tool>;
+
+  /**
+   * 为聊天请求添加工具支持
+   */
+  sendChatRequestWithTools(request: ChatRequest, provider: AIProvider, includeTools?: boolean): Promise<ChatResponse>;
+
+  /**
+   * 处理工具调用响应并执行工具
+   */
+  processToolCallsInResponse(response: ChatResponse): Promise<ChatResponse>;
+
+  /**
+   * 初始化本地工具管理器
+   */
+  initializeLocalToolManager(context: import('@kit.AbilityKit').common.UIAbilityContext): void;
+
   /**
    * 销毁服务
    */

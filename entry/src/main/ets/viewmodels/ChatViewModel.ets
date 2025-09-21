@@ -345,6 +345,7 @@ export class ChatViewModel {
         model: this.currentModel,
         provider: this.getAIProviderByName(this.currentProvider),
         enableSearch: enableWebSearch,
+        enableTools: true, // 启用工具调用
         stream: false,
         max_tokens: 1000,
         temperature: 0.7

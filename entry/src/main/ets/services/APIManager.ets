@@ -7,6 +7,7 @@ import { APIMode, AIProvider, ChatRequest, ChatResponse, ConnectionTestResult, A
 import { ChatRequest as LegacyChatRequest, SimpleMessage, ChatResponse as LegacyChatResponse } from '../models/ChatModels';
 import { ApiService } from './ApiService';
 import { DirectAPIService } from './DirectAPIService';
+import { AppContext } from '../utils/AppContext';
 import { AppStorage } from '../utils/AppStorage';
 import { Logger } from '../utils/Logger';
 import { APIKeyManager } from '../utils/APIKeyManager';
@@ -95,7 +96,10 @@ export class APIManager {
       
       // 初始化APIKeyManager并加载API密钥到DirectAPIService
       await this.initializeAPIKeys();
-      
+
+      // 初始化DirectAPIService的LocalToolManager
+      await this.initializeToolManager();
+
       this.state.isInitialized = true;
       Logger.info('APIManager', `初始化完成，模式: ${this.state.currentMode}, 厂商: ${this.state.currentProvider}`);
     } catch (error) {
@@ -204,7 +208,27 @@ export class APIManager {
       throw new Error(error);
     }
   }
-  
+
+  /**
+   * 初始化工具管理器
+   */
+  private async initializeToolManager(): Promise<void> {
+    try {
+      // 从AppContext获取context（如果可用）
+      const appContext = AppContext.getInstance();
+      const context = appContext.getContext();
+
+      if (context && this.directAPIService instanceof DirectAPIService) {
+        (this.directAPIService as DirectAPIService).initializeLocalToolManager(context);
+        Logger.info('APIManager', 'DirectAPIService工具管理器初始化完成');
+      } else {
+        Logger.warn('APIManager', '无法初始化工具管理器：context不可用或DirectAPIService类型不匹配');
+      }
+    } catch (error) {
+      Logger.warn('APIManager', `工具管理器初始化失败: ${error}, 工具调用功能将不可用`);
+    }
+  }
+
   /**
    * 发送聊天请求
    */
@@ -223,7 +247,15 @@ export class APIManager {
         // 在直连模式下，根据模型确定正确的厂商
         const modelProvider = await this.getProviderByModel(request.model);
         if (modelProvider) {
-          return await this.directAPIService.sendChatRequest(request, modelProvider);
+          // 使用带工具支持的聊天请求
+          if (this.directAPIService instanceof DirectAPIService) {
+            const response = await (this.directAPIService as DirectAPIService).sendChatRequestWithTools(request, modelProvider, true);
+            // 处理工具调用
+            return await (this.directAPIService as DirectAPIService).processToolCallsInResponse(response);
+          } else {
+            // 回退到普通聊天请求
+            return await this.directAPIService.sendChatRequest(request, modelProvider);
+          }
         } else {
           throw new Error(`找不到支持模型 ${request.model} 的厂商`);
         }
