@@ -10,6 +10,7 @@ import {
 import { LocalToolManager } from '../services/LocalToolManager';
 import { Logger } from '../utils/Logger';
 import { ThemeManager } from '../utils/ThemeManager';
+import { AppContext } from '../utils/AppContext';
 
 interface ToolCategoryInfo {
   key: string;
@@ -39,6 +40,10 @@ export struct MCPToolsComponent {
 
   aboutToAppear(): void {
     try {
+      const context = AppContext.getInstance().getContext();
+      if (!context) {
+        return;
+      }
       this.localToolManager = LocalToolManager.getInstance();
       this.loadAvailableTools();
       Logger.info('MCPToolsComponent', 'MCP tools component initialized');

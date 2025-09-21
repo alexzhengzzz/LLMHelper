@@ -6,7 +6,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { Configuration } from '@kit.AbilityKit';
 import { ThemeManager } from '../utils/ThemeManager';
 import { AppConfigManager } from '../utils/AppConfigManager';
-
+import {LocalToolManager } from '../services/LocalToolManager';
 export default class EntryAbility extends UIAbility {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private appConfigManager: AppConfigManager = AppConfigManager.getInstance();
@@ -16,7 +16,11 @@ export default class EntryAbility extends UIAbility {
     
     // 设置应用上下文
     AppContext.getInstance().setContext(this.context);
-    
+    try {
+      LocalToolManager.getInstance(this.context);
+    } catch (e) {
+      hilog.error(0x0000, 'testTag', `Failed to initialize LocalToolManager: ${e.message}`);
+    }
     // 初始化应用配置管理器
     this.appConfigManager.initialize().then(() => {
       hilog.info(0x0000, 'testTag', 'AppConfigManager initialized successfully');

@@ -13,15 +13,25 @@ import { APIKeyManager } from '../utils/APIKeyManager';
 import { IDirectAPIService, IApiService, IAPIKeyManager } from '../di/ServiceInterfaces';
 import { APIKeyConfig } from '../types/APIKeyTypes';
 import { ServerEndpoint } from '../utils/ServerConfigManager';
+import { HybridChatService, HybridChatRequest, HybridChatResponse } from './HybridChatService';
+
+interface HybridChatOptions {
+  enableSearch?: boolean;
+  enableTools?: boolean;
+  stream?: boolean;
+  max_tokens?: number;
+  temperature?: number;
+}
 
 export class APIManager {
   private static instance: APIManager;
   private apiService: IApiService;
   private directAPIService: IDirectAPIService;
   private apiKeyManager: IAPIKeyManager;
+  private hybridChatService: HybridChatService;
   private state: APIManagerState;
   private modeChangeListeners: Array<(mode: APIMode) => void> = [];
-  
+
   // 支持依赖注入的构造函数
   constructor(
     directApiService?: IDirectAPIService,
@@ -31,6 +41,7 @@ export class APIManager {
     this.apiService = apiService || new ApiService();
     this.directAPIService = directApiService || new DirectAPIService();
     this.apiKeyManager = apiKeyManager || APIKeyManager.getInstance();
+    this.hybridChatService = HybridChatService.getInstance();
     this.state = {
       currentMode: APIMode.DIRECT_CALL,
       currentProvider: AIProvider.SILICONFLOW,
@@ -266,7 +277,76 @@ export class APIManager {
       throw new Error(errorMessage);
     }
   }
-  
+
+  /**
+   * 发送混合聊天请求（支持工具调用和搜索）
+   */
+  async sendHybridChatRequest(
+    message: string,
+    model: string,
+    options?: HybridChatOptions
+  ): Promise<HybridChatResponse> {
+    if (!this.state.isInitialized) {
+      await this.initialize();
+    }
+
+    // 验证请求参数
+    if (!message || !model) {
+      throw new Error('消息和模型不能为空');
+    }
+
+    try {
+      // 根据模型确定提供商
+      const modelProvider = await this.getProviderByModel(model);
+      if (!modelProvider) {
+        throw new Error(`找不到支持模型 ${model} 的厂商`);
+      }
+
+      // 构建混合聊天请求
+      const hybridRequest: HybridChatRequest = {
+        message: message,
+        model: model,
+        provider: modelProvider,
+        enableSearch: options?.enableSearch || false,
+        enableTools: options?.enableTools || true,
+        stream: options?.stream || false,
+        max_tokens: options?.max_tokens,
+        temperature: options?.temperature
+      };
+
+      Logger.info('APIManager', `发送混合聊天请求: ${message.substring(0, 50)}...`);
+      Logger.info('APIManager', `模型: ${model}, 提供商: ${modelProvider}`);
+      Logger.info('APIManager', `启用搜索: ${hybridRequest.enableSearch}, 启用工具: ${hybridRequest.enableTools}`);
+
+      // 发送混合聊天请求
+      const response = await this.hybridChatService.sendHybridChatRequest(hybridRequest);
+
+      Logger.info('APIManager', `混合聊天请求完成，总耗时: ${response.totalTime}ms`);
+      Logger.info('APIManager', `搜索使用: ${response.searchUsed}, 工具使用: ${response.toolsUsed}`);
+
+      return response;
+
+    } catch (error) {
+      const errorMessage = (error as Error).message;
+      Logger.error('APIManager', `混合聊天请求失败: ${errorMessage}`);
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * 检查是否支持工具调用
+   */
+  isToolsSupported(): boolean {
+    return this.hybridChatService.isToolsSupported();
+  }
+
+  /**
+   * 获取可用工具数量
+   */
+  getAvailableToolsCount(): number {
+    return this.hybridChatService.getAvailableToolsCount();
+  }
+
   /**
    * 设置API调用模式
    */

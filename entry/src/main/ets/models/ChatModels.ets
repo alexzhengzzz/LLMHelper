@@ -2,6 +2,9 @@
  * 聊天相关数据模型
  */
 
+// 导入通用工具类型
+import { Tool, ParameterProperty } from '../types/APITypes';
+
 // 消息类型枚举
 export enum MessageRole {
   USER = 'user',
@@ -244,18 +247,8 @@ export interface SearchResponse {
 // 工具类型
 export type ToolType = 'function';
 
-// 工具定义
-export interface Tool {
-  type: ToolType;
-  function: ToolFunction;
-}
-
-// 参数属性定义
-export interface ParameterProperty {
-  type: string;
-  description?: string;
-  enum?: string[];
-}
+// 重新导出工具类型，保持兼容性
+export { Tool, ParameterProperty };
 
 // 参数定义
 export interface ParametersDefinition {

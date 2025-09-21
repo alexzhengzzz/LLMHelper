@@ -3,12 +3,17 @@
  * 整合搜索功能和直连AI调用
  */
 
-import { ChatRequest, ChatResponse, AIProvider } from '../types/APITypes';
+import { ChatRequest, ChatResponse, AIProvider, Tool } from '../types/APITypes';
 import { DirectAPIService } from './DirectAPIService';
 import { SearchAPIClient, SearchResponse, SearchClientConfig } from '../clients/SearchAPIClient';
 import { SearchDecisionEngine, SearchDecision } from './SearchDecisionEngine';
 import { MessageEnhancer, EnhancedMessage, SearchInfo } from './MessageEnhancer';
 import { Logger } from '../utils/Logger';
+import { LocalToolManager } from './LocalToolManager';
+import { MCPTool, ToolCallRequest, ToolCallResult } from '../types/MCPTypes';
+import { ToolCall, FunctionCallingChatRequest, FunctionCallingChatResponse, EnhancedMessage as FCEnhancedMessage, ParameterProperty } from '../models/ChatModels';
+import { AppContext } from '../utils/AppContext';
+import { TextContent, ImageContent } from '../types/MCPTypes';
 
 /**
  * 混合聊天请求参数
@@ -18,6 +23,7 @@ export interface HybridChatRequest {
   model: string;
   provider?: AIProvider;
   enableSearch: boolean;
+  enableTools?: boolean;  // 新增：启用工具调用
   stream?: boolean;
   max_tokens?: number;
   temperature?: number;
@@ -29,9 +35,13 @@ export interface HybridChatRequest {
 export interface HybridChatResponse {
   response: ChatResponse;
   searchUsed: boolean;
+  toolsUsed: boolean;        // 新增：是否使用了工具
+  toolCalls?: ToolCall[];    // 新增：工具调用详情
+  toolResults?: ToolCallResult[];  // 新增：工具调用结果
   searchInfo?: SearchInfo;
   searchDecision?: SearchDecision;
   searchTime?: number;
+  toolTime?: number;         // 新增：工具调用耗时
   totalTime: number;
 }
 
@@ -67,18 +77,54 @@ export interface ServiceStatus {
   messageEnhancer: boolean;
 }
 
+/**
+ * 工具调用处理结果
+ */
+interface ToolCallHandleResult {
+  finalResponse: ChatResponse;
+  executedToolCalls: ToolCall[];
+  executedToolResults: ToolCallResult[];
+}
+
+/**
+ * 工具调用消息类型
+ */
+interface ToolCallMessage {
+  tool_calls?: ToolCall[];
+}
+
+
 export class HybridChatService {
   private static instance: HybridChatService;
   private directAPIService: DirectAPIService;
   private searchAPIClient: SearchAPIClient;
   private searchDecisionEngine: SearchDecisionEngine;
   private messageEnhancer: MessageEnhancer;
+  private localToolManager: LocalToolManager | null = null;
 
   private constructor() {
     this.directAPIService = new DirectAPIService();
     this.searchAPIClient = new SearchAPIClient();
     this.searchDecisionEngine = SearchDecisionEngine.getInstance();
     this.messageEnhancer = MessageEnhancer.getInstance();
+    this.initializeToolManager();
+  }
+
+  /**
+   * 初始化工具管理器
+   */
+  private initializeToolManager(): void {
+    try {
+      const context = AppContext.getInstance().getContext();
+      if (context) {
+        this.localToolManager = LocalToolManager.getInstance(context);
+        Logger.info('HybridChatService', 'LocalToolManager initialized successfully');
+      } else {
+        Logger.warn('HybridChatService', 'App context not available, tools disabled');
+      }
+    } catch (error) {
+      Logger.error('HybridChatService', 'Failed to initialize LocalToolManager', error);
+    }
   }
 
   static getInstance(): HybridChatService {
@@ -96,11 +142,16 @@ export class HybridChatService {
     Logger.info('HybridChatService', `原始消息: "${request.message}"`);
     Logger.info('HybridChatService', `模型: ${request.model}`);
     Logger.info('HybridChatService', `搜索开关: ${request.enableSearch}`);
+    Logger.info('HybridChatService', `工具开关: ${request.enableTools || false}`);
     Logger.info('HybridChatService', `提供商: ${request.provider || 'auto'}`);
 
     const startTime = Date.now();
     let searchTime: number | undefined = undefined;
+    let toolTime: number | undefined = undefined;
     let searchUsed = false;
+    let toolsUsed = false;
+    let toolCalls: ToolCall[] | undefined = undefined;
+    let toolResults: ToolCallResult[] | undefined = undefined;
     let searchInfo: SearchInfo | undefined = undefined;
     let searchDecision: SearchDecision | undefined = undefined;
     let finalMessage = request.message;
@@ -150,46 +201,127 @@ export class HybridChatService {
         Logger.info('HybridChatService', '不执行搜索，直接发送原始消息');
       }
 
-      // 第四步：构建ChatRequest
-      const chatRequest: ChatRequest = {
-        messages: [
-          {
-            role: 'user',
-            content: finalMessage
-          }
-        ],
-        model: request.model,
-        stream: request.stream || false,
-        max_tokens: request.max_tokens,
-        temperature: request.temperature
-      };
+      // 第四步：构建ChatRequest（支持Function Calling）
+      let chatRequest: ChatRequest;
 
-      // 第五步：发送AI请求
+      if (request.enableTools && this.localToolManager) {
+        // 使用Function Calling
+        const tools = this.getAvailableTools();
+        const fcRequest: FunctionCallingChatRequest = {
+          model: request.model,
+          messages: [
+            {
+              role: 'user',
+              content: finalMessage,
+            }
+          ],
+          tools: tools,
+          tool_choice: 'auto',
+          enable_web: request.enableSearch
+        };
+
+        chatRequest = {
+          messages: fcRequest.messages,
+          model: fcRequest.model,
+          stream: request.stream || false,
+          max_tokens: request.max_tokens,
+          temperature: request.temperature,
+          tools: tools, // 添加工具定义
+          tool_choice: 'auto' // 设置工具选择策略
+        };
+
+        Logger.info('HybridChatService', `已添加 ${tools.length} 个工具到请求中`);
+      } else {
+        // 普通聊天请求
+        chatRequest = {
+          messages: [
+            {
+              role: 'user',
+              content: finalMessage
+            }
+          ],
+          model: request.model,
+          stream: request.stream || false,
+          max_tokens: request.max_tokens,
+          temperature: request.temperature
+        };
+      }
+
+      // 第五步：发送AI请求并处理工具调用
       Logger.info('HybridChatService', '=== 执行AI请求 ===');
       Logger.info('HybridChatService', `最终消息长度: ${finalMessage.length}字符`);
       Logger.info('HybridChatService', `是否使用搜索: ${searchUsed}`);
-      
+      Logger.info('HybridChatService', `是否启用工具: ${request.enableTools || false}`);
+
       const aiStartTime = Date.now();
-      const aiResponse: ChatResponse = await this.sendAIRequest(chatRequest, request.provider);
+      let aiResponse: ChatResponse = await this.sendAIRequest(chatRequest, request.provider);
+
+      // 检查是否有工具调用
+      const firstChoice = aiResponse.choices?.[0];
+      const assistantMessage = firstChoice?.message;
+
+      // 安全检查工具调用
+      let hasToolCalls = false;
+      let toolCallsData: ToolCall[] = [];
+
+      if (request.enableTools && assistantMessage) {
+        try {
+          // 检查消息是否包含tool_calls属性
+          const messageStr = JSON.stringify(assistantMessage);
+          const messageObj: ToolCallMessage = JSON.parse(messageStr) as ToolCallMessage;
+          if (messageObj && messageObj.tool_calls) {
+            hasToolCalls = true;
+            toolCallsData = messageObj.tool_calls;
+          }
+        } catch (e) {
+          Logger.warn('HybridChatService', '检查工具调用时出错', e);
+        }
+      }
+
+      if (hasToolCalls && toolCallsData.length > 0) {
+        Logger.info('HybridChatService', '=== 检测到工具调用 ===');
+        const toolStartTime = Date.now();
+
+        const toolResult: ToolCallHandleResult = await this.handleToolCalls(
+          aiResponse,
+          chatRequest,
+          request.provider,
+          toolCallsData
+        );
+
+        aiResponse = toolResult.finalResponse;
+        toolCalls = toolResult.executedToolCalls;
+        toolResults = toolResult.executedToolResults;
+        toolsUsed = toolResult.executedToolCalls.length > 0;
+        toolTime = Date.now() - toolStartTime;
+
+        Logger.info('HybridChatService', `工具调用完成，执行了 ${toolResult.executedToolCalls.length} 个工具，耗时: ${toolTime}ms`);
+      }
+
       const aiTime = Date.now() - aiStartTime;
-      
       Logger.info('HybridChatService', `AI请求完成，耗时: ${aiTime}ms`);
-      
+
       const totalTime = Date.now() - startTime;
       
       // 第六步：构建响应
       const hybridResponse: HybridChatResponse = {
         response: aiResponse,
         searchUsed,
+        toolsUsed,
+        toolCalls,
+        toolResults,
         searchInfo,
         searchDecision,
         searchTime,
+        toolTime,
         totalTime
       };
 
       Logger.info('HybridChatService', `=== 混合聊天请求完成 ===`);
-      Logger.info('HybridChatService', `总耗时: ${totalTime}ms (搜索: ${searchTime || 0}ms, AI: ${aiTime}ms)`);
+      Logger.info('HybridChatService', `总耗时: ${totalTime}ms (搜索: ${searchTime || 0}ms, 工具: ${toolTime || 0}ms, AI: ${aiTime}ms)`);
       Logger.info('HybridChatService', `搜索使用状态: ${searchUsed}`);
+      Logger.info('HybridChatService', `工具使用状态: ${toolsUsed}`);
+      Logger.info('HybridChatService', `执行的工具数量: ${toolCalls?.length || 0}`);
       Logger.info('HybridChatService', `AI响应ID: ${aiResponse.id}`);
       Logger.info('HybridChatService', `AI响应内容长度: ${aiResponse.choices?.[0]?.message?.content?.length || 0}字符`);
 
@@ -389,6 +521,279 @@ export class HybridChatService {
       searchDecision
     };
     return result;
+  }
+
+  /**
+   * 获取可用工具列表
+   */
+  private getAvailableTools(): Tool[] {
+    if (!this.localToolManager) {
+      return [];
+    }
+
+    const mcpTools = this.localToolManager.getAvailableTools();
+    const tools: Tool[] = [];
+
+    for (const mcpTool of mcpTools) {
+      // 转换属性类型
+      const properties: Record<string, ParameterProperty> = {};
+      const mcpProperties = mcpTool.inputSchema.properties;
+      if (mcpProperties) {
+        const propKeys = Object.keys(mcpProperties);
+        for (const key of propKeys) {
+          const mcpProp = mcpProperties[key];
+          if (mcpProp && mcpProp.type) {
+            const paramProp: ParameterProperty = {
+              type: mcpProp.type
+            };
+            if (mcpProp.description) {
+              paramProp.description = mcpProp.description;
+            }
+            if (mcpProp.enum) {
+              paramProp.enum = mcpProp.enum as string[];
+            }
+            properties[key] = paramProp;
+          }
+        }
+      }
+
+      const tool: Tool = {
+        type: 'function',
+        function: {
+          name: mcpTool.name,
+          description: mcpTool.description || 'MCP工具',
+          parameters: {
+            type: 'object',
+            properties: properties,
+            required: mcpTool.inputSchema.required || []
+          }
+        }
+      };
+      tools.push(tool);
+    }
+
+    const toolNames: string[] = [];
+    for (const tool of tools) {
+      if (tool.function.name) {
+        toolNames.push(tool.function.name);
+      }
+    }
+    Logger.info('HybridChatService', `获取到 ${tools.length} 个可用工具: ${toolNames.join(', ')}`);
+    return tools;
+  }
+
+  /**
+   * 处理工具调用
+   */
+  private async handleToolCalls(
+    aiResponse: ChatResponse,
+    originalRequest: ChatRequest,
+    provider?: AIProvider,
+    toolCalls?: ToolCall[]
+  ): Promise<ToolCallHandleResult> {
+    if (!this.localToolManager) {
+      throw new Error('LocalToolManager not initialized');
+    }
+
+    const firstChoice = aiResponse.choices?.[0];
+    const assistantMessage = firstChoice?.message;
+
+    // 使用传入的工具调用数据，或从响应中提取
+    let finalToolCalls: ToolCall[] = [];
+    if (toolCalls && toolCalls.length > 0) {
+      finalToolCalls = toolCalls;
+    } else if (assistantMessage) {
+      try {
+        const messageStr = JSON.stringify(assistantMessage);
+        const messageObj: ToolCallMessage = JSON.parse(messageStr) as ToolCallMessage;
+        if (messageObj && messageObj.tool_calls) {
+          finalToolCalls = messageObj.tool_calls;
+        }
+      } catch (e) {
+        Logger.warn('HybridChatService', '提取工具调用数据时出错', e);
+      }
+    }
+
+    Logger.info('HybridChatService', `开始处理 ${finalToolCalls.length} 个工具调用`);
+
+    const executedToolCalls: ToolCall[] = [];
+    const executedToolResults: ToolCallResult[] = [];
+    const toolMessages: FCEnhancedMessage[] = [];
+
+    // 添加原始用户消息和助手的工具调用响应
+    const conversationMessages: FCEnhancedMessage[] = [];
+
+    // 复制原始消息
+    for (const msg of originalRequest.messages) {
+      conversationMessages.push({
+        role: msg.role,
+        content: msg.content
+      });
+    }
+
+    // 添加助手的工具调用响应
+    conversationMessages.push({
+      role: 'assistant',
+      content: assistantMessage?.content || '',
+      tool_calls: finalToolCalls
+    });
+
+    // 执行每个工具调用
+    for (const toolCall of finalToolCalls) {
+      try {
+        Logger.info('HybridChatService', `执行工具: ${toolCall.function.name}`, toolCall.function.arguments);
+
+        // 解析参数
+        const args: Record<string, string | number | boolean> = {};
+        try {
+          const argsStr = toolCall.function.arguments;
+          const tempObj: Record<string, string | number | boolean> = JSON.parse(argsStr) as Record<string, string | number | boolean>;
+
+          if (typeof tempObj === 'object' && tempObj !== null) {
+            const keys = Object.keys(tempObj);
+            for (const key of keys) {
+              const value = tempObj[key];
+              if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+                args[key] = value;
+              }
+            }
+          }
+        } catch (parseError) {
+          Logger.error('HybridChatService', `解析工具参数失败: ${toolCall.function.name}`, parseError);
+          throw new Error(`工具参数格式错误: ${parseError}`);
+        }
+
+        // 构建工具调用请求
+        const toolRequest: ToolCallRequest = {
+          name: toolCall.function.name,
+          arguments: args
+        };
+
+        // 执行工具
+        const toolResult = await this.localToolManager.executeTool(toolRequest);
+
+        executedToolCalls.push(toolCall);
+        executedToolResults.push(toolResult);
+
+        // 添加工具结果消息
+        const toolResultContent = this.formatToolResult(toolResult);
+        toolMessages.push({
+          role: 'tool',
+          content: toolResultContent,
+          tool_call_id: toolCall.id
+        });
+
+        Logger.info('HybridChatService', `工具 ${toolCall.function.name} 执行成功`);
+
+      } catch (error) {
+        Logger.error('HybridChatService', `工具 ${toolCall.function.name} 执行失败`, error);
+
+        // 创建错误结果
+        const errorResult: ToolCallResult = {
+          content: [{
+            type: 'text',
+            text: `工具执行失败: ${error instanceof Error ? error.message : '未知错误'}`
+          }],
+          isError: true
+        };
+
+        executedToolResults.push(errorResult);
+
+        // 添加错误工具结果消息
+        toolMessages.push({
+          role: 'tool',
+          content: `错误: ${error instanceof Error ? error.message : '未知错误'}`,
+          tool_call_id: toolCall.id
+        });
+      }
+    }
+
+    // 如果有工具结果，需要再次调用AI生成最终响应
+    if (toolMessages.length > 0) {
+      Logger.info('HybridChatService', '基于工具结果生成最终响应');
+
+      const finalMessages: FCEnhancedMessage[] = [];
+      // 添加对话消息
+      for (const msg of conversationMessages) {
+        finalMessages.push(msg);
+      }
+      // 添加工具结果消息
+      for (const toolMsg of toolMessages) {
+        finalMessages.push(toolMsg);
+      }
+
+      const finalRequest: ChatRequest = {
+        messages: finalMessages,
+        model: originalRequest.model,
+        stream: originalRequest.stream,
+        max_tokens: originalRequest.max_tokens,
+        temperature: originalRequest.temperature
+      };
+
+      const finalResponse = await this.sendAIRequest(finalRequest, provider);
+
+      const result: ToolCallHandleResult = {
+        finalResponse,
+        executedToolCalls,
+        executedToolResults
+      };
+      return result;
+    }
+
+    // 如果没有工具结果，返回原始响应
+    const result: ToolCallHandleResult = {
+      finalResponse: aiResponse,
+      executedToolCalls,
+      executedToolResults
+    };
+    return result;
+  }
+
+  /**
+   * 格式化工具结果
+   */
+  private formatToolResult(result: ToolCallResult): string {
+    if (result.isError) {
+      const firstContent = result.content[0];
+      if (firstContent && firstContent.type === 'text') {
+        const textContent = firstContent as TextContent;
+        if (textContent.text) {
+          return `错误: ${textContent.text}`;
+        }
+      }
+      return '错误: 未知错误';
+    }
+
+    const textContents = result.content.filter(c => c.type === 'text');
+    if (textContents.length > 0) {
+      const textResults: string[] = [];
+      for (const content of textContents) {
+        const textContent = content as TextContent;
+        if (textContent.text) {
+          textResults.push(textContent.text);
+        }
+      }
+      return textResults.join('\n');
+    }
+
+    return '工具执行完成，但没有返回内容';
+  }
+
+  /**
+   * 检查是否支持工具调用
+   */
+  isToolsSupported(): boolean {
+    return this.localToolManager !== null;
+  }
+
+  /**
+   * 获取可用工具数量
+   */
+  getAvailableToolsCount(): number {
+    if (!this.localToolManager) {
+      return 0;
+    }
+    return this.localToolManager.getAvailableTools().length;
   }
 
   /**

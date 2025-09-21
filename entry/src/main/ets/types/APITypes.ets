@@ -31,6 +31,32 @@ export interface ChatRequest {
   stream?: boolean;
   enable_web?: boolean; // 是否启用联网搜索
   timeout?: number; // 请求超时时间(毫秒)
+  tools?: Tool[]; // 工具定义列表
+  tool_choice?: string; // 工具选择策略：'auto', 'none', 或特定工具名
+}
+
+// 工具定义接口
+export interface Tool {
+  type: 'function';
+  function: ToolFunction;
+}
+
+export interface ToolFunction {
+  name: string;
+  description: string;
+  parameters: ToolParameters;
+}
+
+export interface ToolParameters {
+  type: 'object';
+  properties: Record<string, ParameterProperty>;
+  required: string[];
+}
+
+export interface ParameterProperty {
+  type: string;
+  description?: string;
+  enum?: string[];
 }
 
 // 聊天响应接口
@@ -128,6 +154,8 @@ export interface GLMRequestBody {
   max_tokens: number;
   temperature: number;
   stream: boolean;
+  tools?: Tool[]; // 工具定义列表
+  tool_choice?: string; // 工具选择策略
 }
 
 export interface GLMResponse extends StandardProviderResponse {
@@ -161,6 +189,8 @@ export interface SiliconFlowRequestBody {
   max_tokens: number;
   temperature: number;
   stream: boolean;
+  tools?: Tool[]; // 工具定义列表
+  tool_choice?: string; // 工具选择策略
 }
 
 export interface SiliconFlowResponse extends StandardProviderResponse {

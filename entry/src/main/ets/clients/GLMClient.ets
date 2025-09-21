@@ -231,7 +231,13 @@ export class GLMClient extends BaseAPIClient {
       temperature: request.temperature || 0.7,
       stream: request.stream || false
     };
-    
+
+    // 添加工具支持
+    if (request.tools && request.tools.length > 0) {
+      glmRequest.tools = request.tools;
+      glmRequest.tool_choice = request.tool_choice || 'auto';
+    }
+
     return JSON.stringify(glmRequest);
   }
   

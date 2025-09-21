@@ -1,4 +1,4 @@
-import { Message, MessageRole, ChatRequest, Provider, SimpleMessage, SystemPrompt, Session, ThinkingStatus, ThinkingStep } from '../models/ChatModels';
+import { Message, MessageRole, ChatRequest, Provider, SimpleMessage, SystemPrompt, Session, ThinkingStatus, ThinkingStep, ToolCall } from '../models/ChatModels';
 import { ApiService } from '../services/ApiService';
 import { APIManager, APIMode, AIProvider } from '../services/APIManager';
 import { ChatRequest as APIChatRequest, ChatMessage as APIChatMessage } from '../types/APITypes';
@@ -13,6 +13,7 @@ import { Logger, LogContext } from '../utils/Logger';
 import { ErrorManager } from '../utils/ErrorManager';
 import { ErrorType, ErrorCode, ErrorLevel, ErrorContext } from '../types/ErrorTypes';
 import { ServerConfigManager, ServerEndpoint } from '../utils/ServerConfigManager';
+import { ToolCallResult } from '../types/MCPTypes';
 
 // 用于描述从存储中反序列化的消息对象
 interface StoredMessage {
@@ -54,6 +55,16 @@ interface AudioStateInfo {
   audioLock: boolean;
 }
 
+// 工具调用状态接口
+interface ToolCallState {
+  isToolsEnabled: boolean;
+  toolsSupported: boolean;
+  availableToolsCount: number;
+  executingTools: boolean;
+  lastToolCalls?: ToolCall[];
+  lastToolResults?: ToolCallResult[];
+}
+
 /**
  * 聊天功能ViewModel - 处理聊天相关的业务逻辑
  */
@@ -89,6 +100,10 @@ export class ChatViewModel {
   
   // 深度思考相关
   @Trace currentThinkingMessageId: string = '';
+
+  // 工具调用相关
+  @Trace isToolsEnabled: boolean = false;
+  @Trace executingTools: boolean = false;
 
   constructor() {
     this.apiService = new ApiService();
