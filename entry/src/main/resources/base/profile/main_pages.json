@@ -1,10 +1,11 @@
 {
   "src": [
     "pages/ChatPage",
-    "pages/SettingsPage", 
+    "pages/SettingsPage",
     "pages/SystemPromptManagerPage",
     "pages/APIKeyManagerPage",
     "pages/UserProfileEditPage",
-    "pages/ServerSettingsPage"
+    "pages/ServerSettingsPage",
+    "pages/MCPSettingsPage"
   ]
 }

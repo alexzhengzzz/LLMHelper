@@ -15,6 +15,7 @@ const MESSAGE_LAYOUT_KEY = 'message_layout_preference';
 const API_KEYS_KEY = 'api_keys_config';
 const CURRENT_MODEL_KEY = 'current_model_config'; // 当前选择的模型配置
 const FONT_SETTINGS_KEY = 'font_settings'; // 字体设置
+const MCP_CONFIGURATION_KEY = 'mcp_configuration'; // MCP配置
 
 // 会话管理相关存储键
 const SESSIONS_KEY = 'chat_sessions';
@@ -49,6 +50,26 @@ export interface FontSettings {
   codeFontSize: number;      // 代码字体大小 (10-18px)
   fontFamily: 'system' | 'serif' | 'monospace' | 'rounded' | 'elegant' | 'playful' | 'modern' | 'classic'; // 字体家族
   updatedAt: number;         // 最后更新时间
+}
+
+/**
+ * MCP配置接口
+ */
+export interface MCPConfiguration {
+  servers: Array<MCPServerConfigData>;
+  lastModified: number;
+}
+
+export interface MCPServerConfigData {
+  name: string;
+  description?: string;
+  transportType: 'stdio' | 'http_sse';
+  command?: string;
+  args?: Array<string>;
+  env?: Record<string, string>;
+  url?: string;
+  timeout?: number;
+  retryAttempts?: number;
 }
 
 /**
@@ -1376,6 +1397,202 @@ export class AppStorage {
         listener(settings);
       } catch (e) {
         Logger.error('AppStorage', `字体设置监听器执行失败: ${e}`);
+      }
+    });
+  }
+
+  //=================== MCP配置相关方法 ===================
+
+  /**
+   * 获取MCP配置
+   */
+  static async getMCPConfiguration(): Promise<MCPConfiguration | null> {
+    try {
+      const storage = AppStorage.getStorage();
+      const configStr = await storage.get(MCP_CONFIGURATION_KEY, '');
+
+      if (configStr && typeof configStr === 'string') {
+        const config = JSON.parse(configStr) as MCPConfiguration;
+        Logger.debug('AppStorage', `MCP配置加载成功: ${config.servers.length} 个服务器`);
+        return config;
+      } else {
+        Logger.info('AppStorage', '未找到MCP配置');
+        return null;
+      }
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to get MCP configuration: ${e}`);
+      return null;
+    }
+  }
+
+  /**
+   * 保存MCP配置
+   */
+  static async saveMCPConfiguration(config: MCPConfiguration): Promise<void> {
+    try {
+      // 验证配置的有效性
+      const validatedConfig = AppStorage.validateMCPConfiguration(config);
+
+      const storage = AppStorage.getStorage();
+      await storage.put(MCP_CONFIGURATION_KEY, JSON.stringify(validatedConfig));
+      await storage.flush();
+
+      Logger.info('AppStorage', `MCP配置已保存: ${validatedConfig.servers.length} 个服务器`);
+
+      // 通知监听器
+      AppStorage.notifyMCPConfigurationListeners(validatedConfig);
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to save MCP configuration: ${e}`);
+      throw new Error(`Failed to save MCP configuration: ${e}`);
+    }
+  }
+
+  /**
+   * 添加MCP服务器配置
+   */
+  static async addMCPServer(serverConfig: MCPServerConfigData): Promise<void> {
+    try {
+      const config = await AppStorage.getMCPConfiguration() || {
+        servers: [],
+        lastModified: Date.now()
+      };
+
+      // 检查服务器名称是否已存在
+      const existingIndex = config.servers.findIndex(server => server.name === serverConfig.name);
+      if (existingIndex >= 0) {
+        // 更新现有服务器
+        config.servers[existingIndex] = serverConfig;
+        Logger.info('AppStorage', `MCP服务器配置已更新: ${serverConfig.name}`);
+      } else {
+        // 添加新服务器
+        config.servers.push(serverConfig);
+        Logger.info('AppStorage', `MCP服务器配置已添加: ${serverConfig.name}`);
+      }
+
+      config.lastModified = Date.now();
+      await AppStorage.saveMCPConfiguration(config);
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to add MCP server: ${e}`);
+      throw new Error(`Failed to add MCP server: ${e}`);
+    }
+  }
+
+  /**
+   * 移除MCP服务器配置
+   */
+  static async removeMCPServer(serverName: string): Promise<void> {
+    try {
+      const config = await AppStorage.getMCPConfiguration();
+      if (!config) {
+        Logger.warn('AppStorage', 'No MCP configuration found');
+        return;
+      }
+
+      const initialLength = config.servers.length;
+      config.servers = config.servers.filter(server => server.name !== serverName);
+
+      if (config.servers.length < initialLength) {
+        config.lastModified = Date.now();
+        await AppStorage.saveMCPConfiguration(config);
+        Logger.info('AppStorage', `MCP服务器配置已移除: ${serverName}`);
+      } else {
+        Logger.warn('AppStorage', `MCP服务器不存在: ${serverName}`);
+      }
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to remove MCP server: ${e}`);
+      throw new Error(`Failed to remove MCP server: ${e}`);
+    }
+  }
+
+  /**
+   * 获取默认MCP配置
+   */
+  static getDefaultMCPConfiguration(): MCPConfiguration {
+    return {
+      servers: [],
+      lastModified: Date.now()
+    };
+  }
+
+  /**
+   * 验证MCP配置的有效性
+   */
+  private static validateMCPConfiguration(config: MCPConfiguration): MCPConfiguration {
+    const validatedServers = config.servers.map(server => AppStorage.validateMCPServerConfig(server));
+
+    return {
+      servers: validatedServers,
+      lastModified: config.lastModified || Date.now()
+    };
+  }
+
+  /**
+   * 验证MCP服务器配置的有效性
+   */
+  private static validateMCPServerConfig(server: MCPServerConfigData): MCPServerConfigData {
+    const validTransportTypes: Array<'stdio' | 'http_sse'> = ['stdio', 'http_sse'];
+    const transportType = validTransportTypes.includes(server.transportType) ? server.transportType : 'http_sse';
+
+    return {
+      name: server.name || 'unnamed_server',
+      description: server.description,
+      transportType: transportType,
+      command: server.command,
+      args: server.args || [],
+      env: server.env || {},
+      url: server.url,
+      timeout: Math.max(5000, Math.min(60000, server.timeout || 30000)),
+      retryAttempts: Math.max(0, Math.min(10, server.retryAttempts || 3))
+    };
+  }
+
+  /**
+   * 重置MCP配置为默认值
+   */
+  static async resetMCPConfiguration(): Promise<void> {
+    try {
+      const defaultConfig = AppStorage.getDefaultMCPConfiguration();
+      await AppStorage.saveMCPConfiguration(defaultConfig);
+      Logger.info('AppStorage', 'MCP配置已重置为默认值');
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to reset MCP configuration: ${e}`);
+      throw new Error(`Failed to reset MCP configuration: ${e}`);
+    }
+  }
+
+  //=================== MCP配置监听器相关方法 ===================
+
+  private static mcpConfigurationListeners: ((config: MCPConfiguration) => void)[] = [];
+
+  /**
+   * 添加MCP配置变更监听器
+   */
+  static addMCPConfigurationListener(listener: (config: MCPConfiguration) => void): void {
+    AppStorage.mcpConfigurationListeners.push(listener);
+    Logger.debug('AppStorage', `添加MCP配置监听器，当前监听器数量: ${AppStorage.mcpConfigurationListeners.length}`);
+  }
+
+  /**
+   * 移除MCP配置变更监听器
+   */
+  static removeMCPConfigurationListener(listener: (config: MCPConfiguration) => void): void {
+    const index = AppStorage.mcpConfigurationListeners.indexOf(listener);
+    if (index > -1) {
+      AppStorage.mcpConfigurationListeners.splice(index, 1);
+      Logger.debug('AppStorage', `移除MCP配置监听器，当前监听器数量: ${AppStorage.mcpConfigurationListeners.length}`);
+    }
+  }
+
+  /**
+   * 通知所有MCP配置监听器
+   */
+  private static notifyMCPConfigurationListeners(config: MCPConfiguration): void {
+    Logger.debug('AppStorage', `通知 ${AppStorage.mcpConfigurationListeners.length} 个MCP配置监听器`);
+    AppStorage.mcpConfigurationListeners.forEach(listener => {
+      try {
+        listener(config);
+      } catch (e) {
+        Logger.error('AppStorage', `MCP配置监听器执行失败: ${e}`);
       }
     });
   }

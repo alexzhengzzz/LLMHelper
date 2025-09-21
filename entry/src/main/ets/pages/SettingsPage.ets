@@ -372,6 +372,11 @@ struct SettingsPage {
         title: '提示词管理',
         subtitle: '系统提示词模板',
         type: 'button'
+      },
+      {
+        title: 'MCP设置',
+        subtitle: 'Model Context Protocol 服务器和工具配置',
+        type: 'button'
       }
     ];
   }
@@ -832,6 +837,9 @@ struct SettingsPage {
       case '提示词管理':
         this.navigateToPromptManager();
         break;
+      case 'MCP设置':
+        this.navigateToMCPSettings();
+        break;
       case '关于应用':
         this.showAbout();
         break;
@@ -877,14 +885,22 @@ struct SettingsPage {
   }
 
   private navigateToPromptManager(): void {
-    router.pushUrl({ 
+    router.pushUrl({
       url: 'pages/SystemPromptManagerPage',
       params: { fromSettingsPage: true }
     });
   }
 
+  private navigateToMCPSettings(): void {
+    router.pushUrl({
+      url: 'pages/MCPSettingsPage'
+    }).catch((error: Error) => {
+      Logger.error('SettingsPage', `跳转到MCP设置页面失败: ${error.message}`);
+    });
+  }
+
   private navigateToAPIKeyManager(): void {
-    router.pushUrl({ 
+    router.pushUrl({
       url: 'pages/APIKeyManagerPage'
     });
   }
