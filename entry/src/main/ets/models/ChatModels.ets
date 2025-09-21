@@ -12,10 +12,13 @@ export enum MessageRole {
 // 深度思考状态枚举
 export enum ThinkingStatus {
   IDLE = 'idle',           // 空闲状态
+  PLANNING = 'planning',   // 推理规划
   ANALYZING = 'analyzing', // 分析阶段
+  RESEARCHING = 'researching', // 检索阶段
   THINKING = 'thinking',   // 思考阶段  
   VERIFYING = 'verifying', // 验证阶段
   INTEGRATING = 'integrating', // 整合阶段
+  REFINING = 'refining',   // 质量复盘
   COMPLETED = 'completed', // 已完成
   FAILED = 'failed',       // 失败
   CANCELLED = 'cancelled'  // 已取消
@@ -534,4 +537,3 @@ export type WSMessageData =
   | PingData
   | PongData
   | Record<string, never>; // 空对象类型
-

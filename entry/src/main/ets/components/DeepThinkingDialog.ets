@@ -331,10 +331,13 @@ export struct DeepThinkingDialog {
 
   private getStatusIcon(status: ThinkingStatus): string {
     switch (status) {
+      case ThinkingStatus.PLANNING: return '🗺️';
       case ThinkingStatus.ANALYZING: return '🔍';
+      case ThinkingStatus.RESEARCHING: return '🌐';
       case ThinkingStatus.THINKING: return '🧠';
       case ThinkingStatus.VERIFYING: return '✅';
       case ThinkingStatus.INTEGRATING: return '🎯';
+      case ThinkingStatus.REFINING: return '🔁';
       case ThinkingStatus.COMPLETED: return '✨';
       case ThinkingStatus.FAILED: return '❌';
       case ThinkingStatus.CANCELLED: return '⏹️';
@@ -344,10 +347,13 @@ export struct DeepThinkingDialog {
 
   private getStatusText(status: ThinkingStatus): string {
     switch (status) {
+      case ThinkingStatus.PLANNING: return '思路规划';
       case ThinkingStatus.ANALYZING: return '深度分析';
+      case ThinkingStatus.RESEARCHING: return '资料检索';
       case ThinkingStatus.THINKING: return '多角度思考';
       case ThinkingStatus.VERIFYING: return '批判性验证';
       case ThinkingStatus.INTEGRATING: return '综合整合';
+      case ThinkingStatus.REFINING: return '质量复盘';
       case ThinkingStatus.COMPLETED: return '思考完成';
       case ThinkingStatus.FAILED: return '思考失败';
       case ThinkingStatus.CANCELLED: return '思考取消';
@@ -357,10 +363,13 @@ export struct DeepThinkingDialog {
 
   private getStatusDescription(status: ThinkingStatus): string {
     switch (status) {
+      case ThinkingStatus.PLANNING: return '正在规划推理路径和关键分析方向';
       case ThinkingStatus.ANALYZING: return '正在分析问题的核心要点和关键信息';
+      case ThinkingStatus.RESEARCHING: return '正在梳理外部资料或事实依据';
       case ThinkingStatus.THINKING: return '正在从多个角度深入思考可能的解决方案';
       case ThinkingStatus.VERIFYING: return '正在批判性地验证和反驳前面的思考结果';
       case ThinkingStatus.INTEGRATING: return '正在整合所有思考结果，提供最终答案';
+      case ThinkingStatus.REFINING: return '正在复盘答案质量并提出改进建议';
       case ThinkingStatus.COMPLETED: return '深度思考过程已成功完成';
       case ThinkingStatus.FAILED: return '深度思考过程中出现错误';
       case ThinkingStatus.CANCELLED: return '深度思考过程已被用户取消';

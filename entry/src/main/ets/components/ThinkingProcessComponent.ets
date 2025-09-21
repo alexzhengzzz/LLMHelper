@@ -249,10 +249,13 @@ export struct ThinkingProcessComponent {
   // 工具方法
   private getStatusIcon(): string {
     switch (this.thinkingStatus) {
+      case ThinkingStatus.PLANNING: return '🗺️';
       case ThinkingStatus.ANALYZING: return '🔍';
+      case ThinkingStatus.RESEARCHING: return '🌐';
       case ThinkingStatus.THINKING: return '🧠';
       case ThinkingStatus.VERIFYING: return '✅';
       case ThinkingStatus.INTEGRATING: return '🎯';
+      case ThinkingStatus.REFINING: return '🔁';
       case ThinkingStatus.COMPLETED: return '✨';
       case ThinkingStatus.FAILED: return '❌';
       case ThinkingStatus.CANCELLED: return '⏹️';
@@ -262,10 +265,13 @@ export struct ThinkingProcessComponent {
 
   private getStatusText(): string {
     switch (this.thinkingStatus) {
+      case ThinkingStatus.PLANNING: return '正在规划推理路径...';
       case ThinkingStatus.ANALYZING: return '深度分析中...';
+      case ThinkingStatus.RESEARCHING: return '资料检索中...';
       case ThinkingStatus.THINKING: return '多角度思考中...';
       case ThinkingStatus.VERIFYING: return '批判性验证中...';
       case ThinkingStatus.INTEGRATING: return '综合整合中...';
+      case ThinkingStatus.REFINING: return '质量复盘中...';
       case ThinkingStatus.COMPLETED: return '深度思考完成';
       case ThinkingStatus.FAILED: return '思考过程失败';
       case ThinkingStatus.CANCELLED: return '思考过程已取消';
@@ -275,10 +281,13 @@ export struct ThinkingProcessComponent {
 
   private getBorderColor(): string {
     switch (this.thinkingStatus) {
+      case ThinkingStatus.PLANNING:
       case ThinkingStatus.ANALYZING:
+      case ThinkingStatus.RESEARCHING:
       case ThinkingStatus.THINKING:
       case ThinkingStatus.VERIFYING:
       case ThinkingStatus.INTEGRATING:
+      case ThinkingStatus.REFINING:
         return '#4A90E2';
       case ThinkingStatus.COMPLETED:
         return '#10B981';

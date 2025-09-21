@@ -288,7 +288,12 @@ export class ChatViewModel {
       content,
       this.currentModel,
       finalMessages,
-      callbacks
+      callbacks,
+      {
+        enableWebSearch: false,
+        preferFastResponse: content.length <= 80,
+        maxSteps: 6
+      }
     );
 
     // 处理结果
@@ -388,10 +393,13 @@ export class ChatViewModel {
    */
   private mapThinkingStatus(stepId: string): ThinkingStatus {
     switch (stepId) {
+      case 'plan': return ThinkingStatus.PLANNING;
       case 'analyze': return ThinkingStatus.ANALYZING;
+      case 'research': return ThinkingStatus.RESEARCHING;
       case 'think': return ThinkingStatus.THINKING;
       case 'verify': return ThinkingStatus.VERIFYING;
       case 'integrate': return ThinkingStatus.INTEGRATING;
+      case 'review': return ThinkingStatus.REFINING;
       default: return ThinkingStatus.IDLE;
     }
   }

@@ -180,10 +180,13 @@ export struct DeepThinkingIndicator {
 
   private getStatusTitle(): string {
     switch (this.currentStatus) {
+      case ThinkingStatus.PLANNING: return '🗺️ 思路规划中';
       case ThinkingStatus.ANALYZING: return '🔍 深度分析中';
+      case ThinkingStatus.RESEARCHING: return '🌐 资料检索中';
       case ThinkingStatus.THINKING: return '🧠 多角度思考中';
       case ThinkingStatus.VERIFYING: return '✅ 批判性验证中';
       case ThinkingStatus.INTEGRATING: return '🎯 综合整合中';
+      case ThinkingStatus.REFINING: return '🔁 质量复盘中';
       case ThinkingStatus.COMPLETED: return '✨ 思考完成';
       case ThinkingStatus.FAILED: return '❌ 思考失败';
       case ThinkingStatus.CANCELLED: return '⏹️ 思考取消';
