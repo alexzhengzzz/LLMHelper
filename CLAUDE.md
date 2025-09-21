@@ -4,16 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 ## Quick Start Commands
 
-**Build & Test:**
+**Build:**
 ```bash
 # Build HarmonyOS app
 ./build.sh
-
-# Run all tests  
-./test.sh
-
-# Run single test
-./test-single.sh <TestName>
 
 # Deploy to device
 ./deploy.sh
@@ -22,7 +16,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 **Key Architecture:**
 - **Technology**: HarmonyOS app using ArkTS V2 with MVVM architecture
 - **Backend API**: Connects to Go server at YOUR_SERVER_IP:8080
-- **Test Coverage**: 14 test files, 151 test cases, 95% functional coverage
 - **Core Services**: 13 service classes handling API, WebSocket, voice, AI logic
 
 # Javis - HarmonyOS AI编程助手客户端
@@ -58,48 +51,7 @@ Javis 是一款基于鸿蒙系统的智能AI编程助手应用，通过集成多
 
 # 部署到鸿蒙设备
 ./deploy.sh
-
-# 运行完整测试套件
-./test.sh
-
-# 运行单个测试文件
-./test-single.sh <测试文件名>
-# 例如: ./test-single.sh APIManagerTest
 ```
-
-
-### 测试系统
-
-#### 测试覆盖范围
-项目包含14个完整测试文件，覆盖所有核心功能：
-
-**核心服务测试 (6个)**
-- `APIManagerTest.ets` - API管理器功能测试
-- `WebSocketServiceTest.ets` - WebSocket服务测试  
-- `SpeechServiceTest.ets` - 语音识别和TTS服务测试
-- `ApiServiceTest.ets` - 基础API服务测试
-- `DeepThinkingServiceTest.ets` - 深度思考服务测试
-- `HybridChatServiceTest.ets` - 混合聊天服务测试
-
-**数据存储测试 (2个)**
-- `AppStorageTest.ets` - 应用数据存储管理测试
-- `SessionManagerTest.ets` - 会话管理功能测试
-
-**UI组件测试 (4个)**
-- `ModelSelectorComponentTest.ets` - 模型选择器组件测试
-- `VoiceInputComponentTest.ets` - 语音输入组件测试
-- `SmartTextRendererTest.ets` - 智能文本渲染器测试
-- `DeepThinkingDialogTest.ets` - 深度思考对话框测试
-
-**工具类测试 (2个)**
-- `ThemeManagerTest.ets` - 主题管理器测试
-- `SystemPromptManagerTest.ets` - 系统提示词管理器测试
-
-**测试统计:**
-- 测试文件数: 14个
-- 测试用例数: 151个  
-- 代码行数: ~4,200行
-- 功能覆盖率: 95%
 
 ## 📁 项目结构
 
@@ -244,11 +196,9 @@ entry/src/main/ets/
 ## 💡 开发提示
 
 ### 常用操作
-1. **快速测试单个功能**: 使用 `./test-single.sh <TestName>` 
-2. **查看可用测试**: 运行 `./test-single.sh` 不带参数
-3. **构建应用**: 使用 `./build.sh` 编译.hap文件
-4. **部署到设备**: 使用 `./deploy.sh` 部署到鸿蒙设备
-5. **查看日志**: Logger.debug/info/warn/error，禁止使用console
+1 **构建应用**: 使用 `./build.sh` 编译.hap文件
+2 **部署到设备**: 使用 `./deploy.sh` 部署到鸿蒙设备
+3 **查看日志**: Logger.debug/info/warn/error，禁止使用console
 
 ### 关键开发规则
 - **路径规范**: 所有文件路径必须是绝对路径，不使用相对路径

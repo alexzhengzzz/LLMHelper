@@ -2,7 +2,6 @@
 
 [![HarmonyOS](https://img.shields.io/badge/HarmonyOS-5.0+-blue.svg)](https://developer.harmonyos.com/)
 [![ArkTS](https://img.shields.io/badge/ArkTS-V2-green.svg)](https://developer.harmonyos.com/arkts/)
-[![Test Coverage](https://img.shields.io/badge/测试覆盖率-95%25-brightgreen.svg)](#测试)
 
 Javis 是一款基于鸿蒙系统的智能AI编程助手应用，集成多个大语言模型API，为开发者提供智能编程辅助、语音交互、代码执行等功能。
 
@@ -26,9 +25,6 @@ Javis 是一款基于鸿蒙系统的智能AI编程助手应用，集成多个大
 ```bash
 # 构建应用
 ./build.sh
-
-# 运行测试 
-./test.sh
 
 # 部署到设备
 ./deploy.sh
@@ -110,18 +106,6 @@ entry/src/main/ets/
 - **测试用例**: 151个测试用例  
 - **功能覆盖**: 95%核心功能覆盖
 - **代码行数**: ~4,200行测试代码
-
-### 测试命令
-```bash
-# 运行完整测试套件
-./test.sh
-
-# 运行单个测试文件  
-./test-single.sh APIManagerTest
-
-# 查看可用测试
-./test-single.sh
-```
 
 ### 主要测试模块
 - **核心服务测试** (6个): API管理、WebSocket、语音服务等
