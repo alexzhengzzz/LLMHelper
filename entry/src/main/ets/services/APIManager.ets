@@ -1,6 +1,6 @@
 /**
  * API管理器 - 统一接口层
- * 支持服务器代理和直连两种模式
+ * 集成AIServiceStateManager实现统一状态管理
  */
 
 import { APIMode, AIProvider, ChatRequest, ChatResponse, ConnectionTestResult, APIManagerState, ModeConfig } from '../types/APITypes';
@@ -15,10 +15,19 @@ import { IDirectAPIService, IApiService, IAPIKeyManager } from '../di/ServiceInt
 import { APIKeyConfig } from '../types/APIKeyTypes';
 import { ServerEndpoint } from '../utils/ServerConfigManager';
 import { HybridChatService, HybridChatRequest, HybridChatResponse } from './HybridChatService';
+import { AIServiceStateManager } from '../utils/AIServiceStateManager';
+import {
+  AIServiceMode,
+  AIServiceState,
+  AIServiceFeatures,
+  StateChangeEvent,
+  StateValidationResult
+} from '../types/AIServiceStateTypes';
 
-interface HybridChatOptions {
-  enableSearch?: boolean;
-  enableTools?: boolean;
+/**
+ * 简化的聊天选项接口
+ */
+interface SimpleChatOptions {
   stream?: boolean;
   max_tokens?: number;
   temperature?: number;
@@ -30,6 +39,7 @@ export class APIManager {
   private directAPIService: IDirectAPIService;
   private apiKeyManager: IAPIKeyManager;
   private hybridChatService: HybridChatService;
+  private stateManager: AIServiceStateManager;
   private state: APIManagerState;
   private modeChangeListeners: Array<(mode: APIMode) => void> = [];
 
@@ -43,11 +53,17 @@ export class APIManager {
     this.directAPIService = directApiService || new DirectAPIService();
     this.apiKeyManager = apiKeyManager || APIKeyManager.getInstance();
     this.hybridChatService = HybridChatService.getInstance();
+    this.stateManager = AIServiceStateManager.getInstance();
     this.state = {
       currentMode: APIMode.DIRECT_CALL,
       currentProvider: AIProvider.SILICONFLOW,
       isInitialized: false
     };
+
+    // 监听状态变更
+    this.stateManager.addStateChangeListener((event: StateChangeEvent) => {
+      this.onStateChange(event);
+    });
   }
   
   static getInstance(): APIManager {
@@ -76,24 +92,15 @@ export class APIManager {
    */
   async initialize(): Promise<void> {
     try {
-      // 检查服务器配置是否可用
-      const serverConfigAvailable = await this.checkServerConfig();
-      
-      // 加载保存的API模式
-      const savedMode = await AppStorage.getAPIMode();
-      
-      // 如果服务器配置不可用，强制使用直连模式
-      if (!serverConfigAvailable) {
-        this.state.currentMode = APIMode.DIRECT_CALL;
-        Logger.info('APIManager', '服务器配置不可用，强制使用直连模式');
-      } else {
-        this.state.currentMode = savedMode === 'direct_call' ? APIMode.DIRECT_CALL : APIMode.SERVER_PROXY;
-      }
-      
-      // 加载保存的厂商配置
-      const savedProvider = await this.loadSavedProvider();
-      this.state.currentProvider = savedProvider;
-      
+      Logger.info('APIManager', '开始初始化API管理器');
+
+      // 首先初始化状态管理器
+      await this.stateManager.initialize();
+
+      // 获取当前状态并同步到APIManager
+      const currentState = this.stateManager.getCurrentState();
+      this.syncStateFromManager(currentState);
+
       // 初始化APIKeyManager并加载API密钥到DirectAPIService
       await this.initializeAPIKeys();
 
@@ -101,7 +108,7 @@ export class APIManager {
       await this.initializeToolManager();
 
       this.state.isInitialized = true;
-      Logger.info('APIManager', `初始化完成，模式: ${this.state.currentMode}, 厂商: ${this.state.currentProvider}`);
+      Logger.info('APIManager', `初始化完成，模式: ${this.getAPIMode()}, 厂商: ${this.state.currentProvider}`);
     } catch (error) {
       const errorMessage = (error as Error).message;
       Logger.error('APIManager', `初始化失败: ${errorMessage}`);
@@ -230,20 +237,23 @@ export class APIManager {
   }
 
   /**
-   * 发送聊天请求
+   * 发送聊天请求 - 基于统一状态管理
    */
   async sendChatRequest(request: ChatRequest): Promise<ChatResponse> {
     if (!this.state.isInitialized) {
       await this.initialize();
     }
-    
+
     // 验证请求参数
     if (!request.model) {
       throw new Error('模型不能为空');
     }
-    
+
+    // 获取当前状态
+    const currentState = this.stateManager.getCurrentState();
+
     try {
-      if (this.state.currentMode === APIMode.DIRECT_CALL) {
+      if (currentState.mode === AIServiceMode.DIRECT) {
         // 在直连模式下，根据模型确定正确的厂商
         const modelProvider = await this.getProviderByModel(request.model);
         if (modelProvider) {
@@ -311,12 +321,75 @@ export class APIManager {
   }
 
   /**
+   * 智能聊天请求 - 基于当前状态自动选择功能
+   */
+  async sendSmartChatRequest(
+    message: string,
+    model: string,
+    options?: SimpleChatOptions
+  ): Promise<HybridChatResponse> {
+    if (!this.state.isInitialized) {
+      await this.initialize();
+    }
+
+    // 验证请求参数
+    if (!message || !model) {
+      throw new Error('消息和模型不能为空');
+    }
+
+    // 获取当前状态
+    const currentState = this.stateManager.getCurrentState();
+
+    // 验证当前状态是否有效
+    const validation = this.stateManager.validateState(currentState);
+    if (!validation.isValid) {
+      throw new Error(validation.errorMessage || '当前状态无效');
+    }
+
+    try {
+      // 根据模型确定提供商
+      const modelProvider = await this.getProviderByModel(model);
+      if (!modelProvider) {
+        throw new Error(`找不到支持模型 ${model} 的厂商`);
+      }
+
+      // 构建混合聊天请求，基于当前状态自动设置功能
+      const hybridRequest: HybridChatRequest = {
+        message: message,
+        model: model,
+        provider: modelProvider,
+        enableSearch: currentState.features.enableWebSearch,
+        enableTools: currentState.features.enableMCPTools,
+        stream: options?.stream || false,
+        max_tokens: options?.max_tokens,
+        temperature: options?.temperature
+      };
+
+      Logger.info('APIManager', `发送智能聊天请求: ${message.substring(0, 50)}...`);
+      Logger.info('APIManager', `当前状态: ${this.stateManager.getStateString()}`);
+      Logger.info('APIManager', `功能配置: 搜索=${hybridRequest.enableSearch}, 工具=${hybridRequest.enableTools}`);
+
+      // 发送混合聊天请求
+      const response = await this.hybridChatService.sendHybridChatRequest(hybridRequest);
+
+      Logger.info('APIManager', `智能聊天请求完成，总耗时: ${response.totalTime}ms`);
+      return response;
+
+    } catch (error) {
+      const errorMessage = (error as Error).message;
+      Logger.error('APIManager', `智能聊天请求失败: ${errorMessage}`);
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
    * 发送混合聊天请求（支持工具调用和搜索）
+   * @deprecated 请使用 sendSmartChatRequest 方法
    */
   async sendHybridChatRequest(
     message: string,
     model: string,
-    options?: HybridChatOptions
+    options?: SimpleChatOptions
   ): Promise<HybridChatResponse> {
     if (!this.state.isInitialized) {
       await this.initialize();
@@ -334,13 +407,13 @@ export class APIManager {
         throw new Error(`找不到支持模型 ${model} 的厂商`);
       }
 
-      // 构建混合聊天请求
+      // 构建混合聊天请求（使用默认配置）
       const hybridRequest: HybridChatRequest = {
         message: message,
         model: model,
         provider: modelProvider,
-        enableSearch: options?.enableSearch || false,
-        enableTools: options?.enableTools || true,
+        enableSearch: false,
+        enableTools: true,
         stream: options?.stream || false,
         max_tokens: options?.max_tokens,
         temperature: options?.temperature
@@ -381,44 +454,20 @@ export class APIManager {
 
   /**
    * 设置API调用模式
+   * @deprecated 此方法已重构，现在通过状态管理器处理
    */
-  async setAPIMode(mode: APIMode): Promise<void> {
-    try {
-      const oldMode = this.state.currentMode;
-      
-      // 当切换到服务器代理模式时，自动配置服务器地址
-      if (mode === APIMode.SERVER_PROXY && oldMode !== mode) {
-        await this.ensureServerConfig();
-      }
-      
-      // 检查是否可以切换到服务器代理模式
-      if (mode === APIMode.SERVER_PROXY) {
-        const serverConfigAvailable = await this.checkServerConfig();
-        if (!serverConfigAvailable) {
-          throw new Error('服务器配置不可用，无法使用服务器代理模式，请先配置有效的服务器地址');
-        }
-      }
-      
-      this.state.currentMode = mode;
-      await AppStorage.setAPIMode(mode === APIMode.DIRECT_CALL ? 'direct_call' : 'server_proxy');
-      Logger.info('APIManager', `API模式已切换到: ${mode}`);
-      
-      // 如果模式确实发生了变更，通知所有监听器
-      if (oldMode !== mode) {
-        this.notifyModeChangeListeners(mode);
-      }
-    } catch (error) {
-      const errorMessage = (error as Error).message;
-      Logger.error('APIManager', `设置API模式失败: ${errorMessage}`);
-      throw new Error(errorMessage);
-    }
+  private async setAPIModeOld(mode: APIMode): Promise<void> {
+    // 此方法已被新的setAPIMode方法替代
+    // 新方法在文件末尾，使用统一状态管理器
+    throw new Error('请使用新的setAPIMode方法');
   }
   
   /**
    * 获取当前API模式
+   * @deprecated 请使用 getAPIMode() 方法
    */
   getCurrentMode(): APIMode {
-    return this.state.currentMode;
+    return this.getAPIMode();
   }
   
   /**
@@ -649,6 +698,108 @@ export class APIManager {
         Logger.error('APIManager', `模式变更监听器执行失败: ${(error as Error).message}`);
       }
     });
+  }
+
+  /**
+   * 状态变更回调
+   */
+  private onStateChange(event: StateChangeEvent): void {
+    Logger.info('APIManager', '收到状态变更事件');
+    this.syncStateFromManager(event.newState);
+
+    // 通知传统的模式监听器
+    const newAPIMode = this.convertToAPIMode(event.newState.mode);
+    const oldAPIMode = this.convertToAPIMode(event.previousState.mode);
+
+    if (newAPIMode !== oldAPIMode) {
+      this.notifyModeChangeListeners(newAPIMode);
+    }
+  }
+
+  /**
+   * 从状态管理器同步状态到APIManager
+   */
+  private syncStateFromManager(state: AIServiceState): void {
+    const apiMode = this.convertToAPIMode(state.mode);
+    this.state.currentMode = apiMode;
+
+    Logger.debug('APIManager', `状态已同步: 模式=${apiMode}, 功能=${JSON.stringify(state.features)}`);
+  }
+
+  /**
+   * 转换AIServiceMode到APIMode
+   */
+  private convertToAPIMode(serviceMode: AIServiceMode): APIMode {
+    return serviceMode === AIServiceMode.DIRECT ? APIMode.DIRECT_CALL : APIMode.SERVER_PROXY;
+  }
+
+  /**
+   * 转换APIMode到AIServiceMode
+   */
+  private convertToServiceMode(apiMode: APIMode): AIServiceMode {
+    return apiMode === APIMode.DIRECT_CALL ? AIServiceMode.DIRECT : AIServiceMode.SERVER_PROXY;
+  }
+
+  /**
+   * 获取当前API模式
+   */
+  getAPIMode(): APIMode {
+    return this.convertToAPIMode(this.stateManager.getCurrentMode());
+  }
+
+  /**
+   * 设置API模式 - 使用状态管理器
+   */
+  async setAPIMode(mode: APIMode): Promise<string | null> {
+    const serviceMode = this.convertToServiceMode(mode);
+    const result = await this.stateManager.setMode(serviceMode);
+
+    if (!result.isValid) {
+      return result.errorMessage;
+    }
+
+    return null;
+  }
+
+  /**
+   * 获取当前功能状态
+   */
+  getCurrentFeatures(): AIServiceFeatures {
+    return this.stateManager.getCurrentFeatures();
+  }
+
+  /**
+   * 设置功能开关
+   */
+  async setFeature(featureName: 'enableWebSearch' | 'enableDeepThinking' | 'enableMCPTools', enabled: boolean): Promise<string | null> {
+    const result = await this.stateManager.setFeature(featureName, enabled);
+
+    if (!result.isValid) {
+      return result.errorMessage;
+    }
+
+    return null;
+  }
+
+  /**
+   * 检查功能是否支持
+   */
+  isFeatureSupported(featureName: 'enableWebSearch' | 'enableDeepThinking' | 'enableMCPTools'): boolean {
+    return this.stateManager.isFeatureSupported(featureName);
+  }
+
+  /**
+   * 获取状态字符串表示
+   */
+  getStateString(): string {
+    return this.stateManager.getStateString();
+  }
+
+  /**
+   * 验证当前状态
+   */
+  validateCurrentState(): StateValidationResult {
+    return this.stateManager.validateState(this.stateManager.getCurrentState());
   }
 }
 

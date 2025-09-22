@@ -83,7 +83,7 @@ export class ChatViewModel {
   @Trace sessions: Session[] = [];
 
   private apiService: ApiService;
-  private apiManager: APIManager;
+  public apiManager: APIManager;
   private ttsService: TTSService;
   private autoTTSService: AutoTTSService;
   private sessionManager: SessionManager;
@@ -411,6 +411,47 @@ export class ChatViewModel {
         assistantMessage.searchInfo = apiResponse.search_info || '🌐 已使用网络搜索';
         assistantMessage.searchDetails = apiResponse.search_info || '🌐 已使用网络搜索';
       }
+    }
+  }
+
+  /**
+   * 处理智能消息 - 基于统一状态管理
+   */
+  private async handleSmartMessage(
+    content: string,
+    assistantMessage: Message
+  ): Promise<void> {
+    try {
+      // 使用APIManager的智能聊天功能
+      const response = await this.apiManager.sendSmartChatRequest(
+        content,
+        this.currentModel
+      );
+
+      // 更新助手消息内容
+      assistantMessage.content = response.response.choices[0]?.message.content || '无回复内容';
+      assistantMessage.isLoading = false;
+
+      // 更新搜索和工具使用信息
+      if (response.searchUsed && response.searchInfo) {
+        assistantMessage.webUsed = true;
+        assistantMessage.searchInfo = response.searchInfo.query || '🌐 已使用网络搜索';
+        assistantMessage.searchDetails = response.searchInfo.query || '🌐 已使用网络搜索';
+      }
+
+      if (response.toolsUsed && response.toolCalls) {
+        // 工具调用信息已包含在response中
+        Logger.info('ChatViewModel', `使用了 ${response.toolCalls.length} 个工具`);
+      }
+
+      Logger.info('ChatViewModel', `智能聊天完成，总耗时: ${response.totalTime}ms`);
+    } catch (error) {
+      const errorMessage = (error as Error).message;
+      Logger.error('ChatViewModel', `智能聊天失败: ${errorMessage}`);
+
+      assistantMessage.content = `抱歉，处理消息时出现错误：${errorMessage}`;
+      assistantMessage.isLoading = false;
+      throw new Error(errorMessage);
     }
   }
 
@@ -773,9 +814,9 @@ export class ChatViewModel {
   }
 
   /**
-   * 发送消息
+   * 发送消息 - 使用状态管理器自动确定功能配置
    */
-  async sendMessage(content: string, isVoiceMessage: boolean = false, enableWebSearch: boolean = false, enableDeepThinking: boolean = false): Promise<void> {
+  async sendMessage(content: string, isVoiceMessage: boolean = false): Promise<void> {
     if (!content.trim() || this.isLoading) {
       return;
     }
@@ -793,23 +834,26 @@ export class ChatViewModel {
     
     await this.saveMessages();
 
+    // 获取当前功能状态
+    const currentFeatures = this.apiManager.getCurrentFeatures();
+
     // 添加加载中的助手消息
     const assistantMessage = new Message(MessageRole.ASSISTANT, '');
     assistantMessage.isLoading = true;
-    assistantMessage.isDeepThinking = enableDeepThinking;
-    assistantMessage.thinkingStatus = enableDeepThinking ? ThinkingStatus.ANALYZING : ThinkingStatus.IDLE;
+    assistantMessage.isDeepThinking = currentFeatures.enableDeepThinking;
+    assistantMessage.thinkingStatus = currentFeatures.enableDeepThinking ? ThinkingStatus.ANALYZING : ThinkingStatus.IDLE;
     this.messages.push(assistantMessage);
 
     this.isLoading = true;
 
     try {
       // 根据是否启用深度思考选择不同的处理方式
-      if (enableDeepThinking) {
+      if (currentFeatures.enableDeepThinking) {
         Logger.info('ChatViewModel', '启用深度思考模式');
-        await this.handleDeepThinking(content, assistantMessage, enableWebSearch);
+        await this.handleDeepThinking(content, assistantMessage, currentFeatures.enableWebSearch);
       } else {
-        Logger.info('ChatViewModel', '使用普通模式');
-        await this.handleSimpleMessage(content, assistantMessage, enableWebSearch);
+        Logger.info('ChatViewModel', '使用智能聊天模式');
+        await this.handleSmartMessage(content, assistantMessage);
       }
     } catch (error) {
       const errorContext = new ErrorContext();
@@ -817,8 +861,9 @@ export class ChatViewModel {
       errorContext.function = 'sendMessage';
       errorContext.additionalInfo = JSON.stringify({
         isVoiceMessage: isVoiceMessage,
-        enableWebSearch: enableWebSearch,
-        enableDeepThinking: enableDeepThinking,
+        enableWebSearch: currentFeatures.enableWebSearch,
+        enableDeepThinking: currentFeatures.enableDeepThinking,
+        enableMCPTools: currentFeatures.enableMCPTools,
         messageLength: content.length,
         currentProvider: this.currentProvider,
         currentModel: this.currentModel

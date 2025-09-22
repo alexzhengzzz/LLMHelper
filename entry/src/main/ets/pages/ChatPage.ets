@@ -327,12 +327,17 @@ struct ChatPage {
       Logger.info('ChatPage', '使用默认状态栏高度44vp');
     }
     
-    // 加载深度思考状态
+    // 从APIManager同步功能状态
     try {
-      this.enableDeepThinking = AppStorage.get('enableDeepThinking') ?? false;
-      Logger.info('ChatPage', `深度思考状态加载成功: ${this.enableDeepThinking ? '已开启' : '已关闭'}`);
+      const currentFeatures = this.chatViewModel.apiManager.getCurrentFeatures();
+      this.enableWebSearch = currentFeatures.enableWebSearch;
+      this.enableDeepThinking = currentFeatures.enableDeepThinking;
+      Logger.info('ChatPage', `功能状态同步完成: 联网搜索=${this.enableWebSearch}, 深度思考=${this.enableDeepThinking}, MCP工具=${currentFeatures.enableMCPTools}`);
     } catch (error) {
-      Logger.error('ChatPage', `加载深度思考状态失败: ${error}`);
+      Logger.error('ChatPage', `同步功能状态失败: ${error}`);
+      // 使用默认状态
+      this.enableWebSearch = false;
+      this.enableDeepThinking = false;
     }
     
     // 添加头像设置监听器
@@ -1801,9 +1806,7 @@ struct ChatPage {
 
     const sendPromise = this.chatViewModel.sendMessage(
       message,
-      isVoiceMessage,
-      this.enableWebSearch,
-      this.enableDeepThinking
+      isVoiceMessage
     );
 
     // 先滚动让新消息立即可见，再等待处理完成
@@ -1830,9 +1833,7 @@ struct ChatPage {
 
     const sendPromise = this.chatViewModel.sendMessage(
       trimmed,
-      true,
-      this.enableWebSearch,
-      this.enableDeepThinking
+      true
     );
 
     this.scrollToBottom();
@@ -2078,15 +2079,36 @@ struct ChatPage {
     await this.chatViewModel.clearMessages();
   }
 
-  private toggleWebSearch(): void {
-    this.enableWebSearch = !this.enableWebSearch;
-    Logger.info('ChatPage', `联网搜索状态切换: ${this.enableWebSearch}`);
-    
-    // 显示状态切换提示
-    promptAction.showToast({
-      message: this.enableWebSearch ? '🌐 直连模式联网搜索已开启' : '📱 已切换到离线模式',
-      duration: 1500
-    });
+  private async toggleWebSearch(): Promise<void> {
+    try {
+      const currentState = !this.enableWebSearch;
+      const result = await this.chatViewModel.apiManager.setFeature('enableWebSearch', currentState);
+
+      if (result) {
+        // 功能不支持
+        promptAction.showToast({
+          message: `❗ ${result}`,
+          duration: 2000
+        });
+        return;
+      }
+
+      // 更新成功，同步本地状态
+      this.enableWebSearch = currentState;
+      Logger.info('ChatPage', `联网搜索状态切换: ${this.enableWebSearch}`);
+
+      // 显示状态切换提示
+      promptAction.showToast({
+        message: this.enableWebSearch ? '🌐 联网搜索已开启' : '📱 已切换到离线模式',
+        duration: 1500
+      });
+    } catch (error) {
+      Logger.error('ChatPage', `切换联网搜索失败: ${error}`);
+      promptAction.showToast({
+        message: '❗ 联网搜索切换失败，请稍后重试',
+        duration: 1500
+      });
+    }
   }
 
   private async toggleMute(): Promise<void> {
@@ -2106,18 +2128,36 @@ struct ChatPage {
     }
   }
 
-  private toggleDeepThinking(): void {
-    this.enableDeepThinking = !this.enableDeepThinking;
-    Logger.info('ChatPage', `深度思考状态切换: ${this.enableDeepThinking}`);
-    
-    // 状态持久化存储
-    AppStorage.setOrCreate('enableDeepThinking', this.enableDeepThinking);
-    
-    // 显示状态切换提示
-    promptAction.showToast({
-      message: this.enableDeepThinking ? '🧠 深度思考模式已开启' : '💭 切换到普通模式',
-      duration: 1500
-    });
+  private async toggleDeepThinking(): Promise<void> {
+    try {
+      const currentState = !this.enableDeepThinking;
+      const result = await this.chatViewModel.apiManager.setFeature('enableDeepThinking', currentState);
+
+      if (result) {
+        // 功能不支持
+        promptAction.showToast({
+          message: `❗ ${result}`,
+          duration: 2000
+        });
+        return;
+      }
+
+      // 更新成功，同步本地状态
+      this.enableDeepThinking = currentState;
+      Logger.info('ChatPage', `深度思考状态切换: ${this.enableDeepThinking}`);
+
+      // 显示状态切换提示
+      promptAction.showToast({
+        message: this.enableDeepThinking ? '🧠 深度思考模式已开启' : '💭 切换到普通模式',
+        duration: 1500
+      });
+    } catch (error) {
+      Logger.error('ChatPage', `切换深度思考失败: ${error}`);
+      promptAction.showToast({
+        message: '❗ 深度思考切换失败，请稍后重试',
+        duration: 1500
+      });
+    }
   }
 
   private async toggleMessageLayout(): Promise<void> {

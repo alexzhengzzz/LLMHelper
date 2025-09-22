@@ -206,6 +206,7 @@ entry/src/main/ets/
 - **日志系统**: 禁止使用console，必须使用统一的Logger系统
 - **架构模式**: 组件开发遵循MVVM架构模式
 - **类型安全**: 100%类型安全，禁用any、unknown、ESObject
+- **MCP工具开发**: ArkTS对MCP接入要求极高，所有类型都需要写得非常详细，禁止类型推断依赖
 - **测试要求**: 测试文件必须包含完整的边界条件和异常处理测试
 
 ### 代码质量要求
@@ -219,6 +220,27 @@ entry/src/main/ets/
 - 新增UI组件: 在 `components/` 目录创建，并添加对应测试
 - 新增服务: 在 `services/` 目录实现，遵循现有服务接口规范
 - 新增工具类: 在 `utils/` 目录添加，提供通用功能支持
+
+### MCP工具开发指导
+
+**ArkTS严格类型要求**:
+项目已实现CalculatorTool和AppLauncherTool作为MCP工具开发范式，ArkTS对MCP接入要求极其严格：
+
+- 禁用any、unknown、ESObject类型
+- 所有接口必须明确类型定义（如`CalculatorJSONSchema extends JSONSchema`）
+- 参数转换必须使用严格的类型断言（如`args.operation as string`）
+- JSON Schema构建需要详细的类型声明（如`Record<string, JSONSchema>`）
+- 工具执行器必须严格实现LocalToolExecutor接口
+- 错误处理必须遵循ToolCallResult类型规范
+- 100%类型安全，无类型推断依赖
+
+**开发模式**:
+- **简单工具**: 参考CalculatorTool，无外部依赖，纯计算逻辑
+- **复杂工具**: 参考AppLauncherTool，需要系统权限和上下文依赖
+- **注册机制**: 在LocalToolManager中注册新工具
+- **UI自动生成**: MCPToolsComponent根据JSON Schema自动生成参数表单
+
+详细开发范式请参考：`MCP.md`
 
 ## 📊 HarmonyOS客户端统计
 - **源代码**: 65个ArkTS文件，约28,852行代码
