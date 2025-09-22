@@ -405,9 +405,10 @@ export struct SmartTextRenderer {
   @Param content: string = '';
   @Param thinkingSteps?: ThinkingStep[] = [];
   @Param thinkingStatus?: ThinkingStatus = ThinkingStatus.IDLE;
+  @Param fontSettings?: FontSettings = undefined; // 新增：接受外部传入的字体设置
   @Local textBlocks: TextBlock[] = [];
   @Local contentHash: string = '';
-  @Local fontSettings: FontSettings = {
+  @Local internalFontSettings: FontSettings = {
     chatFontSize: 16,
     codeFontSize: 14,
     fontFamily: 'system',
@@ -415,17 +416,57 @@ export struct SmartTextRenderer {
   };
   private fontManager: FontManager = FontManager.getInstance();
   private fontSettingsListener: (settings: FontSettings) => void = (settings: FontSettings) => {
-    this.fontSettings = settings;
+    // 只有在没有外部传入fontSettings时才更新内部状态
+    if (!this.fontSettings) {
+      this.internalFontSettings = settings;
+    }
   };
-  
+
+  /**
+   * 获取当前使用的字体设置
+   */
+  @Computed
+  get currentFontSettings(): FontSettings {
+    return this.fontSettings || this.internalFontSettings;
+  }
+
+  /**
+   * 获取当前字体家族的CSS值（响应式）
+   */
+  @Computed
+  get currentFontFamilyCss(): string {
+    const fontFamily = this.currentFontSettings.fontFamily;
+    switch (fontFamily) {
+      case 'monospace':
+        return 'Monaco, Consolas, "SF Mono", "Courier New", "Droid Sans Mono", monospace';
+      case 'serif':
+        return 'Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif';
+      case 'rounded':
+        return '"SF Pro Rounded", "PingFang SC", "Helvetica Neue", "Source Han Sans SC", Arial, sans-serif';
+      case 'elegant':
+        return '"Optima", "Avenir Next", "PingFang SC", "Source Han Sans SC", "Helvetica Neue", sans-serif';
+      case 'playful':
+        return '"Comic Sans MS", "Marker Felt", "PingFang SC", "Source Han Sans SC", "Helvetica", sans-serif';
+      case 'modern':
+        return '"SF Pro Display", "Roboto", "Noto Sans CJK SC", "PingFang SC", "Helvetica Neue", sans-serif';
+      case 'classic':
+        return '"Palatino", "Book Antiqua", "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif';
+      case 'system':
+      default:
+        return 'system-ui, -apple-system, "PingFang SC", "Source Han Sans SC", sans-serif';
+    }
+  }
+
   async aboutToAppear(): Promise<void> {
-    // 初始化字体管理器
-    try {
-      await this.fontManager.initialize();
-      this.fontSettings = this.fontManager.getFontSettings();
-      this.fontManager.addListener(this.fontSettingsListener);
-    } catch (error) {
-      Logger.error(TAG, `初始化字体设置失败: ${error}`);
+    // 如果没有外部传入fontSettings，则从FontManager初始化
+    if (!this.fontSettings) {
+      try {
+        await this.fontManager.initialize();
+        this.internalFontSettings = this.fontManager.getFontSettings();
+        this.fontManager.addListener(this.fontSettingsListener);
+      } catch (error) {
+        Logger.error(TAG, `初始化字体设置失败: ${error}`);
+      }
     }
 
     this.updateTextBlocks();
@@ -436,8 +477,10 @@ export struct SmartTextRenderer {
     this.textBlocks = [];
     this.contentHash = '';
 
-    // 移除字体设置监听器
-    this.fontManager.removeListener(this.fontSettingsListener);
+    // 只有在使用内部字体管理时才移除监听器
+    if (!this.fontSettings) {
+      this.fontManager.removeListener(this.fontSettingsListener);
+    }
   }
   
   /**
@@ -541,7 +584,7 @@ export struct SmartTextRenderer {
    */
   private getHeadingStyle(level: number): HeadingStyle {
     // 基于级别和聊天字体大小返回不同的样式
-    const baseFontSize = this.fontSettings.chatFontSize;
+    const baseFontSize = this.currentFontSettings.chatFontSize;
     switch (level) {
       case 1:
         return {fontSize: baseFontSize + 4, fontWeight: FontWeight.Bold, marginTop: 8, marginBottom: 4} as HeadingStyle;
@@ -569,7 +612,7 @@ export struct SmartTextRenderer {
           .fontSize(fontSize)
           .fontWeight(fontWeight)
           .fontColor($r('app.color.text_primary'))
-          .fontFamily(this.fontManager.getFontFamilyCss())
+          .fontFamily(this.currentFontFamilyCss)
           .textAlign(TextAlign.Start)
           .copyOption(CopyOptions.LocalDevice)
           .wordBreak(WordBreak.BREAK_WORD)
@@ -606,17 +649,17 @@ export struct SmartTextRenderer {
       // 语言标签（如果有）
       if (block.language && block.language.length > 0) {
         Text(block.language)
-          .fontSize(Math.max(10, this.fontSettings.codeFontSize - 2))
+          .fontSize(Math.max(10, this.currentFontSettings.codeFontSize - 2))
           .fontColor($r('app.color.text_secondary'))
-          .fontFamily(this.fontManager.getFontFamilyCss())
+          .fontFamily(this.currentFontFamilyCss)
           .margin({ left: 8, bottom: 2 })
       }
 
       // 代码内容
       Text(block.content)
-        .fontSize(this.fontSettings.codeFontSize)
+        .fontSize(this.currentFontSettings.codeFontSize)
         .fontColor($r('app.color.text_primary'))
-        .fontFamily(this.fontManager.getFontFamilyCss())
+        .fontFamily(this.currentFontFamilyCss)
         .textAlign(TextAlign.Start)
         .copyOption(CopyOptions.LocalDevice)
         .wordBreak(WordBreak.BREAK_WORD)
@@ -652,16 +695,16 @@ export struct SmartTextRenderer {
     Row({ space: 8 }) {
       // 列表项目符号
       Text('•')
-        .fontSize(this.fontSettings.chatFontSize)
+        .fontSize(this.currentFontSettings.chatFontSize)
         .fontColor($r('app.color.text_primary'))
-        .fontFamily(this.fontManager.getFontFamilyCss())
+        .fontFamily(this.currentFontFamilyCss)
         .margin({ top: 2 })
 
       // 列表项内容 - 暂时强制使用Text测试间距问题
       Text(this.stripMarkdownFormats(block.content))
-        .fontSize(this.fontSettings.chatFontSize)
+        .fontSize(this.currentFontSettings.chatFontSize)
         .fontColor($r('app.color.text_primary'))
-        .fontFamily(this.fontManager.getFontFamilyCss())
+        .fontFamily(this.currentFontFamilyCss)
         .textAlign(TextAlign.Start)
         .copyOption(CopyOptions.LocalDevice)
         .wordBreak(WordBreak.BREAK_WORD)
@@ -682,20 +725,20 @@ export struct SmartTextRenderer {
     Row() {
       // 列表项目符号
       Text('•')
-        .fontSize(this.fontSettings.chatFontSize)
+        .fontSize(this.currentFontSettings.chatFontSize)
         .fontColor($r('app.color.text_primary'))
-        .fontFamily(this.fontManager.getFontFamilyCss())
+        .fontFamily(this.currentFontFamilyCss)
         .margin({ right: 8, top: 2 })
 
       // 列表项内容
       Column() {
         if (block.inlineFormats && block.inlineFormats.length > 0) {
-          this.buildRichText(block.content, block.inlineFormats, this.fontSettings.chatFontSize, FontWeight.Normal);
+          this.buildRichText(block.content, block.inlineFormats, this.currentFontSettings.chatFontSize, FontWeight.Normal);
         } else {
           Text(block.content)
-            .fontSize(this.fontSettings.chatFontSize)
+            .fontSize(this.currentFontSettings.chatFontSize)
             .fontColor($r('app.color.text_primary'))
-            .fontFamily(this.fontManager.getFontFamilyCss())
+            .fontFamily(this.currentFontFamilyCss)
             .textAlign(TextAlign.Start)
             .copyOption(CopyOptions.LocalDevice)
             .wordBreak(WordBreak.BREAK_WORD)
@@ -719,15 +762,15 @@ export struct SmartTextRenderer {
     Column() {
       // 暂时都使用Text组件，避免RichText的问题
       Text(this.stripMarkdownFormats(block.content))
-        .fontSize(this.fontSettings.chatFontSize)
+        .fontSize(this.currentFontSettings.chatFontSize)
         .fontColor($r('app.color.text_primary'))
-        .fontFamily(this.fontManager.getFontFamilyCss())
+        .fontFamily(this.currentFontFamilyCss)
         .textAlign(TextAlign.Start)
         .copyOption(CopyOptions.LocalDevice)
         .wordBreak(WordBreak.BREAK_WORD)
-        .lineHeight(this.fontSettings.chatFontSize * 1.5)
-        .minFontSize(this.fontSettings.chatFontSize)
-        .maxFontSize(this.fontSettings.chatFontSize)
+        .lineHeight(this.currentFontSettings.chatFontSize * 1.5)
+        .minFontSize(this.currentFontSettings.chatFontSize)
+        .maxFontSize(this.currentFontSettings.chatFontSize)
     }
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
@@ -752,7 +795,7 @@ export struct SmartTextRenderer {
    * 构建带行内格式的富文本
    */
   @Builder
-  buildRichText(content: string, formats: InlineFormat[], fontSize: number = this.fontSettings.chatFontSize, fontWeight: FontWeight = FontWeight.Normal) {
+  buildRichText(content: string, formats: InlineFormat[], fontSize: number = this.currentFontSettings.chatFontSize, fontWeight: FontWeight = FontWeight.Normal) {
     Column() {
       RichText(this.wrapWithBaseStyle(this.processInlineFormats(content, formats), fontSize, fontWeight))
         .width('100%')
@@ -814,7 +857,7 @@ export struct SmartTextRenderer {
   private wrapWithBaseStyle(html: string, fontSize: number, fontWeight: FontWeight): string {
     const cssWeight = this.toCssFontWeight(fontWeight);
     const lineHeight = Math.round(fontSize * 1.5);
-    const fontFamily = this.fontManager.getFontFamilyCss();
+    const fontFamily = this.currentFontFamilyCss;
     return `<div style="width: 100%; box-sizing: border-box; font-size: ${fontSize}px; font-weight: ${cssWeight}; font-family: ${fontFamily}; line-height: ${lineHeight}px; color: inherit; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;">${html}</div>`;
   }
 
@@ -875,14 +918,14 @@ export struct SmartTextRenderer {
   buildParagraph(block: TextBlock) {
     // 暂时都使用Text组件，避免RichText的问题
     Text(this.stripMarkdownFormats(block.content))
-      .fontSize(this.fontSettings.chatFontSize)
+      .fontSize(this.currentFontSettings.chatFontSize)
       .fontColor($r('app.color.text_primary'))
-      .fontFamily(this.fontManager.getFontFamilyCss())
+      .fontFamily(this.currentFontFamilyCss)
       .textAlign(TextAlign.Start)
       .copyOption(CopyOptions.LocalDevice)
       .wordBreak(WordBreak.BREAK_WORD)
-      .lineHeight(this.fontSettings.chatFontSize * 1.5)
-      .minFontSize(this.fontSettings.chatFontSize)
-      .maxFontSize(this.fontSettings.chatFontSize)
+      .lineHeight(this.currentFontSettings.chatFontSize * 1.5)
+      .minFontSize(this.currentFontSettings.chatFontSize)
+      .maxFontSize(this.currentFontSettings.chatFontSize)
   }
 }

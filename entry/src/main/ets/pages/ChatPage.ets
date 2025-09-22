@@ -109,7 +109,7 @@ struct ChatPage {
   @Local fontSettings: FontSettings = {
     chatFontSize: 16,
     codeFontSize: 14,
-    fontFamily: 'system',
+    fontFamily: 'playful',
     updatedAt: Date.now()
   };
   @Local userAvatarType: 'default' | 'emoji' | 'image' = 'default';
@@ -156,8 +156,10 @@ struct ChatPage {
     Logger.info('ChatPage', '头像设置已更新');
   };
   private fontSettingsListener: (settings: FontSettings) => void = (settings: FontSettings) => {
+    Logger.info('ChatPage', `收到FontManager字体设置变更通知: ${JSON.stringify(settings)}`);
+    Logger.info('ChatPage', `更新前本地字体设置: ${JSON.stringify(this.fontSettings)}`);
     this.fontSettings = settings;
-    Logger.info('ChatPage', `字体设置已更新: ${JSON.stringify(settings)}`);
+    Logger.info('ChatPage', `更新后本地字体设置: ${JSON.stringify(this.fontSettings)}`);
   };
   
   private readonly handleVoiceComponentResult = (text: string): void => {
@@ -435,7 +437,14 @@ struct ChatPage {
     try {
       Logger.info('ChatPage', '页面显示，重新加载字体设置');
       const previousFontSettings = this.fontSettings;
-      this.fontSettings = this.fontManager.getFontSettings();
+
+      // 直接从AppStorage获取最新字体设置，避免FontManager异步通知延迟问题
+      const latestFontSettings = await StorageManager.getFontSettings();
+
+      Logger.info('ChatPage', `当前本地字体设置: ${JSON.stringify(previousFontSettings)}`);
+      Logger.info('ChatPage', `AppStorage最新字体设置: ${JSON.stringify(latestFontSettings)}`);
+
+      this.fontSettings = latestFontSettings;
 
       // 检查字体设置是否有变化
       if (previousFontSettings.chatFontSize !== this.fontSettings.chatFontSize ||
@@ -443,7 +452,7 @@ struct ChatPage {
           previousFontSettings.fontFamily !== this.fontSettings.fontFamily) {
         Logger.info('ChatPage', `字体设置已更新: ${JSON.stringify(this.fontSettings)}`);
       } else {
-        Logger.debug('ChatPage', '字体设置未变更');
+        Logger.info('ChatPage', '字体设置未变更');
       }
     } catch (error) {
       Logger.error('ChatPage', `重新加载字体设置失败: ${error}`);
@@ -1308,7 +1317,10 @@ struct ChatPage {
                   })
 
                   // 智能渲染的消息内容
-                  SmartTextRenderer({ content: message.content.trim() })
+                  SmartTextRenderer({
+                    content: message.content.trim(),
+                    fontSettings: this.fontSettings
+                  })
                 }
               }
             }
