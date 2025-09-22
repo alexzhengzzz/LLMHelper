@@ -18,6 +18,17 @@ export interface AIServiceFeatures {
   enableWebSearch: boolean;     // 联网搜索开关
   enableDeepThinking: boolean;  // 深度思考开关
   enableMCPTools: boolean;      // MCP工具调用开关
+  mcpToolsConfig?: MCPServiceFeatures; // MCP工具详细配置
+}
+
+/**
+ * MCP服务功能配置
+ */
+export interface MCPServiceFeatures {
+  globalEnabled: boolean;              // 全局MCP开关
+  enabledTools: Record<string, boolean>; // 工具启用状态映射
+  toolUsageTracking: boolean;         // 工具使用统计开关
+  toolConfigVersion: number;          // 配置版本号
 }
 
 /**

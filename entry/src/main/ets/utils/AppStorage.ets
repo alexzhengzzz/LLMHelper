@@ -16,6 +16,7 @@ const API_KEYS_KEY = 'api_keys_config';
 const CURRENT_MODEL_KEY = 'current_model_config'; // 当前选择的模型配置
 const FONT_SETTINGS_KEY = 'font_settings'; // 字体设置
 const MCP_CONFIGURATION_KEY = 'mcp_configuration'; // MCP配置
+const MCP_TOOLS_CONFIG_KEY = 'mcp_tools_config'; // MCP工具开关配置
 
 // 会话管理相关存储键
 const SESSIONS_KEY = 'chat_sessions';
@@ -58,6 +59,16 @@ export interface FontSettings {
 export interface MCPConfiguration {
   servers: Array<MCPServerConfigData>;
   lastModified: number;
+}
+
+/**
+ * MCP工具配置接口
+ */
+export interface MCPToolsConfig {
+  enabledTools: Record<string, boolean>; // 工具名称 -> 是否启用
+  globalEnabled: boolean;                // 全局MCP开关
+  lastModified: number;                  // 最后修改时间
+  toolUsageStats: Record<string, number>; // 工具使用统计
 }
 
 export interface MCPServerConfigData {
@@ -1593,6 +1604,325 @@ export class AppStorage {
         listener(config);
       } catch (e) {
         Logger.error('AppStorage', `MCP配置监听器执行失败: ${e}`);
+      }
+    });
+  }
+
+  //=================== MCP工具配置管理方法 ===================
+
+  /**
+   * 获取默认MCP工具配置
+   */
+  static getDefaultMCPToolsConfig(): MCPToolsConfig {
+    return {
+      enabledTools: {
+        'calculator': true,      // 计算器默认启用
+        'app_launcher': true,    // 应用启动器默认启用
+        'weather_service': true  // 天气服务默认启用
+      },
+      globalEnabled: true,
+      lastModified: Date.now(),
+      toolUsageStats: {}
+    };
+  }
+
+  /**
+   * 获取MCP工具配置
+   */
+  static async getMCPToolsConfig(): Promise<MCPToolsConfig> {
+    try {
+      const storage = AppStorage.getStorage();
+      const configStr = await storage.get(MCP_TOOLS_CONFIG_KEY, '');
+
+      if (configStr && typeof configStr === 'string') {
+        const config = JSON.parse(configStr) as MCPToolsConfig;
+        Logger.debug('AppStorage', `MCP工具配置加载成功: ${Object.keys(config.enabledTools).length} 个工具`);
+        return config;
+      } else {
+        Logger.info('AppStorage', '未找到MCP工具配置，使用默认配置');
+        const defaultConfig = AppStorage.getDefaultMCPToolsConfig();
+        await AppStorage.saveMCPToolsConfig(defaultConfig);
+        return defaultConfig;
+      }
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to get MCP tools config: ${e}`);
+      return AppStorage.getDefaultMCPToolsConfig();
+    }
+  }
+
+  /**
+   * 保存MCP工具配置
+   */
+  static async saveMCPToolsConfig(config: MCPToolsConfig): Promise<void> {
+    try {
+      const validatedConfig = AppStorage.validateMCPToolsConfig(config);
+
+      const storage = AppStorage.getStorage();
+      await storage.put(MCP_TOOLS_CONFIG_KEY, JSON.stringify(validatedConfig));
+      await storage.flush();
+
+      Logger.info('AppStorage', `MCP工具配置已保存: 全局=${validatedConfig.globalEnabled}, 启用工具=${Object.keys(validatedConfig.enabledTools).filter(tool => validatedConfig.enabledTools[tool]).length}`);
+
+      // 通知监听器
+      AppStorage.notifyMCPToolsConfigListeners(validatedConfig);
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to save MCP tools config: ${e}`);
+      throw new Error(`Failed to save MCP tools config: ${e}`);
+    }
+  }
+
+  /**
+   * 更新MCP工具配置（部分更新）
+   */
+  static async updateMCPToolsConfig(updates: Partial<MCPToolsConfig>): Promise<MCPToolsConfig> {
+    try {
+      const currentConfig = await AppStorage.getMCPToolsConfig();
+      const newConfig: MCPToolsConfig = {
+        enabledTools: updates.enabledTools !== undefined ? updates.enabledTools : currentConfig.enabledTools,
+        globalEnabled: updates.globalEnabled !== undefined ? updates.globalEnabled : currentConfig.globalEnabled,
+        lastModified: Date.now(),
+        toolUsageStats: updates.toolUsageStats !== undefined ? updates.toolUsageStats : currentConfig.toolUsageStats
+      };
+
+      await AppStorage.saveMCPToolsConfig(newConfig);
+      return newConfig;
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to update MCP tools config: ${e}`);
+      throw new Error(`Failed to update MCP tools config: ${e}`);
+    }
+  }
+
+  /**
+   * 设置工具启用状态
+   */
+  static async setToolEnabled(toolName: string, enabled: boolean): Promise<void> {
+    try {
+      const config = await AppStorage.getMCPToolsConfig();
+      config.enabledTools[toolName] = enabled;
+      config.lastModified = Date.now();
+
+      await AppStorage.saveMCPToolsConfig(config);
+      Logger.info('AppStorage', `工具 ${toolName} 已${enabled ? '启用' : '禁用'}`);
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to set tool enabled: ${e}`);
+      throw new Error(`Failed to set tool enabled: ${e}`);
+    }
+  }
+
+  /**
+   * 检查工具是否启用
+   */
+  static async isToolEnabled(toolName: string): Promise<boolean> {
+    try {
+      const config = await AppStorage.getMCPToolsConfig();
+      const enabled = config.globalEnabled && (config.enabledTools[toolName] ?? true);
+      Logger.debug('AppStorage', `工具 ${toolName} 启用状态: ${enabled}`);
+      return enabled;
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to check tool enabled: ${e}`);
+      return true; // 默认启用
+    }
+  }
+
+  /**
+   * 批量设置工具启用状态
+   */
+  static async setMultipleToolsEnabled(toolStates: Record<string, boolean>): Promise<void> {
+    try {
+      const config = await AppStorage.getMCPToolsConfig();
+
+      const entries = Object.entries(toolStates);
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        config.enabledTools[entry[0]] = entry[1];
+      }
+
+      config.lastModified = Date.now();
+      await AppStorage.saveMCPToolsConfig(config);
+
+      Logger.info('AppStorage', `批量更新工具状态: ${Object.keys(toolStates).length} 个工具`);
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to set multiple tools enabled: ${e}`);
+      throw new Error(`Failed to set multiple tools enabled: ${e}`);
+    }
+  }
+
+  /**
+   * 全部启用工具
+   */
+  static async enableAllTools(): Promise<void> {
+    try {
+      const config = await AppStorage.getMCPToolsConfig();
+
+      for (const toolName of Object.keys(config.enabledTools)) {
+        config.enabledTools[toolName] = true;
+      }
+
+      config.lastModified = Date.now();
+      await AppStorage.saveMCPToolsConfig(config);
+
+      Logger.info('AppStorage', '所有工具已启用');
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to enable all tools: ${e}`);
+      throw new Error(`Failed to enable all tools: ${e}`);
+    }
+  }
+
+  /**
+   * 全部禁用工具
+   */
+  static async disableAllTools(): Promise<void> {
+    try {
+      const config = await AppStorage.getMCPToolsConfig();
+
+      for (const toolName of Object.keys(config.enabledTools)) {
+        config.enabledTools[toolName] = false;
+      }
+
+      config.lastModified = Date.now();
+      await AppStorage.saveMCPToolsConfig(config);
+
+      Logger.info('AppStorage', '所有工具已禁用');
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to disable all tools: ${e}`);
+      throw new Error(`Failed to disable all tools: ${e}`);
+    }
+  }
+
+  /**
+   * 增加工具使用统计
+   */
+  static async incrementToolUsage(toolName: string): Promise<void> {
+    try {
+      const config = await AppStorage.getMCPToolsConfig();
+      config.toolUsageStats[toolName] = (config.toolUsageStats[toolName] || 0) + 1;
+      config.lastModified = Date.now();
+
+      await AppStorage.saveMCPToolsConfig(config);
+      Logger.debug('AppStorage', `工具 ${toolName} 使用次数: ${config.toolUsageStats[toolName]}`);
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to increment tool usage: ${e}`);
+    }
+  }
+
+  /**
+   * 获取工具使用统计
+   */
+  static async getToolUsageStats(): Promise<Record<string, number>> {
+    try {
+      const config = await AppStorage.getMCPToolsConfig();
+      return config.toolUsageStats;
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to get tool usage stats: ${e}`);
+      return {};
+    }
+  }
+
+  /**
+   * 重置工具使用统计
+   */
+  static async resetToolUsageStats(): Promise<void> {
+    try {
+      const config = await AppStorage.getMCPToolsConfig();
+      config.toolUsageStats = {};
+      config.lastModified = Date.now();
+
+      await AppStorage.saveMCPToolsConfig(config);
+      Logger.info('AppStorage', '工具使用统计已重置');
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to reset tool usage stats: ${e}`);
+      throw new Error(`Failed to reset tool usage stats: ${e}`);
+    }
+  }
+
+  /**
+   * 验证MCP工具配置的有效性
+   */
+  private static validateMCPToolsConfig(config: MCPToolsConfig): MCPToolsConfig {
+    const validatedEnabledTools: Record<string, boolean> = {};
+
+    // 验证启用工具配置
+    if (config.enabledTools && typeof config.enabledTools === 'object') {
+      const toolEntries = Object.entries(config.enabledTools);
+      for (let i = 0; i < toolEntries.length; i++) {
+        const entry = toolEntries[i];
+        const toolName = entry[0];
+        const enabled = entry[1];
+        if (typeof toolName === 'string' && typeof enabled === 'boolean') {
+          validatedEnabledTools[toolName] = enabled;
+        }
+      }
+    }
+
+    // 验证使用统计
+    const validatedUsageStats: Record<string, number> = {};
+    if (config.toolUsageStats && typeof config.toolUsageStats === 'object') {
+      const statsEntries = Object.entries(config.toolUsageStats);
+      for (let i = 0; i < statsEntries.length; i++) {
+        const entry = statsEntries[i];
+        const toolName = entry[0];
+        const count = entry[1];
+        if (typeof toolName === 'string' && typeof count === 'number' && count >= 0) {
+          validatedUsageStats[toolName] = Math.floor(count);
+        }
+      }
+    }
+
+    return {
+      enabledTools: validatedEnabledTools,
+      globalEnabled: typeof config.globalEnabled === 'boolean' ? config.globalEnabled : true,
+      lastModified: typeof config.lastModified === 'number' ? config.lastModified : Date.now(),
+      toolUsageStats: validatedUsageStats
+    };
+  }
+
+  /**
+   * 重置MCP工具配置为默认值
+   */
+  static async resetMCPToolsConfig(): Promise<void> {
+    try {
+      const defaultConfig = AppStorage.getDefaultMCPToolsConfig();
+      await AppStorage.saveMCPToolsConfig(defaultConfig);
+      Logger.info('AppStorage', 'MCP工具配置已重置为默认值');
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to reset MCP tools config: ${e}`);
+      throw new Error(`Failed to reset MCP tools config: ${e}`);
+    }
+  }
+
+  //=================== MCP工具配置监听器相关方法 ===================
+
+  private static mcpToolsConfigListeners: ((config: MCPToolsConfig) => void)[] = [];
+
+  /**
+   * 添加MCP工具配置变更监听器
+   */
+  static addMCPToolsConfigListener(listener: (config: MCPToolsConfig) => void): void {
+    AppStorage.mcpToolsConfigListeners.push(listener);
+    Logger.debug('AppStorage', `添加MCP工具配置监听器，当前监听器数量: ${AppStorage.mcpToolsConfigListeners.length}`);
+  }
+
+  /**
+   * 移除MCP工具配置变更监听器
+   */
+  static removeMCPToolsConfigListener(listener: (config: MCPToolsConfig) => void): void {
+    const index = AppStorage.mcpToolsConfigListeners.indexOf(listener);
+    if (index > -1) {
+      AppStorage.mcpToolsConfigListeners.splice(index, 1);
+      Logger.debug('AppStorage', `移除MCP工具配置监听器，当前监听器数量: ${AppStorage.mcpToolsConfigListeners.length}`);
+    }
+  }
+
+  /**
+   * 通知所有MCP工具配置监听器
+   */
+  private static notifyMCPToolsConfigListeners(config: MCPToolsConfig): void {
+    Logger.debug('AppStorage', `通知 ${AppStorage.mcpToolsConfigListeners.length} 个MCP工具配置监听器`);
+    AppStorage.mcpToolsConfigListeners.forEach(listener => {
+      try {
+        listener(config);
+      } catch (e) {
+        Logger.error('AppStorage', `MCP工具配置监听器执行失败: ${e}`);
       }
     });
   }

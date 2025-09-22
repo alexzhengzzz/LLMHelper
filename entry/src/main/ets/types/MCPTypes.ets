@@ -693,3 +693,126 @@ export interface CityCoordinates {
  * 城市坐标映射接口
  */
 export interface CityCoordinatesMap extends Record<string, CityCoordinates> {}
+
+// ======================== MCP工具配置相关类型定义 ========================
+
+/**
+ * MCP工具配置接口
+ */
+export interface MCPToolConfig {
+  name: string;
+  enabled: boolean;
+  category: MCPToolCategory;
+  priority: number;
+  description?: string;
+  lastUsed?: number;
+  usageCount: number;
+  configurable: boolean;
+  systemTool: boolean;
+}
+
+/**
+ * MCP工具分类枚举
+ */
+export enum MCPToolCategory {
+  UTILITY = 'utility',         // 实用工具
+  SYSTEM = 'system',           // 系统工具
+  APPLICATION = 'application', // 应用管理
+  FILESYSTEM = 'filesystem',   // 文件系统
+  NETWORK = 'network',         // 网络工具
+  CUSTOM = 'custom'            // 自定义工具
+}
+
+/**
+ * 工具启用状态映射
+ */
+export interface ToolEnabledMap extends Record<string, boolean> {}
+
+/**
+ * 工具使用统计映射
+ */
+export interface ToolUsageStatsMap extends Record<string, number> {}
+
+/**
+ * MCP工具状态枚举
+ */
+export enum MCPToolStatus {
+  ENABLED = 'enabled',
+  DISABLED = 'disabled',
+  ERROR = 'error',
+  LOADING = 'loading'
+}
+
+/**
+ * 工具配置更新请求
+ */
+export interface ToolConfigUpdateRequest {
+  toolName: string;
+  enabled?: boolean;
+  priority?: number;
+  description?: string;
+}
+
+/**
+ * 批量工具配置更新请求
+ */
+export interface BatchToolConfigUpdateRequest {
+  toolUpdates: Array<ToolConfigUpdateRequest>;
+  globalEnabled?: boolean;
+}
+
+/**
+ * 工具配置验证结果
+ */
+export interface ToolConfigValidationResult {
+  isValid: boolean;
+  errors: Array<string>;
+  warnings: Array<string>;
+}
+
+/**
+ * 工具统计信息
+ */
+export interface ToolStatistics {
+  totalTools: number;
+  enabledTools: number;
+  disabledTools: number;
+  mostUsedTool?: string;
+  leastUsedTool?: string;
+  totalUsage: number;
+  categoryStats: Record<MCPToolCategory, number>;
+}
+
+/**
+ * 工具搜索过滤器
+ */
+export interface ToolSearchFilter {
+  query?: string;
+  category?: MCPToolCategory;
+  status?: MCPToolStatus;
+  sortBy?: 'name' | 'usage' | 'lastUsed' | 'priority';
+  sortOrder?: 'asc' | 'desc';
+}
+
+/**
+ * 工具操作结果
+ */
+export interface ToolOperationResult {
+  success: boolean;
+  message: string;
+  toolName?: string;
+  error?: string;
+  data?: Record<string, BaseType | JSONRPCError | Array<BaseType | JSONRPCError>>;
+}
+
+/**
+ * 工具批量操作结果
+ */
+export interface BatchToolOperationResult {
+  success: boolean;
+  message: string;
+  results: Array<ToolOperationResult>;
+  totalCount: number;
+  successCount: number;
+  failureCount: number;
+}

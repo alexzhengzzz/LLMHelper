@@ -7,6 +7,7 @@ import {
   AIServiceMode,
   AIServiceState,
   AIServiceFeatures,
+  MCPServiceFeatures,
   StateValidationResult,
   StateChangeEvent,
   StateChangeListener,
@@ -423,5 +424,254 @@ export class AIServiceStateManager {
     this.listeners = [];
     this.isInitialized = false;
     Logger.info('AIServiceStateManager', '状态管理器已销毁');
+  }
+
+  //=================== MCP工具级状态管理方法 ===================
+
+  /**
+   * 获取MCP工具配置
+   */
+  getMCPToolsConfig(): MCPServiceFeatures | null {
+    return this.currentState.features.mcpToolsConfig || null;
+  }
+
+  /**
+   * 设置MCP工具配置
+   */
+  async setMCPToolsConfig(config: MCPServiceFeatures): Promise<StateValidationResult> {
+    const newFeatures: AIServiceFeatures = {
+      enableWebSearch: this.currentState.features.enableWebSearch,
+      enableDeepThinking: this.currentState.features.enableDeepThinking,
+      enableMCPTools: this.currentState.features.enableMCPTools,
+      mcpToolsConfig: config
+    };
+
+    const newState: AIServiceState = {
+      mode: this.currentState.mode,
+      features: newFeatures,
+      lastUpdated: Date.now()
+    };
+
+    try {
+      // 同步到AppStorage
+      await AppStorage.updateMCPToolsConfig({
+        enabledTools: config.enabledTools,
+        globalEnabled: config.globalEnabled,
+        toolUsageStats: {},
+        lastModified: Date.now()
+      });
+
+      return await this.setState(newState);
+    } catch (error) {
+      Logger.error('AIServiceStateManager', `设置MCP工具配置失败: ${(error as Error).message}`);
+      throw new Error(`设置MCP工具配置失败: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * 设置MCP全局开关
+   */
+  async setMCPGlobalEnabled(enabled: boolean): Promise<StateValidationResult> {
+    const currentConfig = this.getMCPToolsConfig() || this.getDefaultMCPConfig();
+    const newConfig: MCPServiceFeatures = {
+      globalEnabled: enabled,
+      enabledTools: currentConfig.enabledTools,
+      toolUsageTracking: currentConfig.toolUsageTracking,
+      toolConfigVersion: currentConfig.toolConfigVersion
+    };
+
+    // 同时更新features.enableMCPTools
+    const newFeatures: AIServiceFeatures = {
+      enableWebSearch: this.currentState.features.enableWebSearch,
+      enableDeepThinking: this.currentState.features.enableDeepThinking,
+      enableMCPTools: enabled,
+      mcpToolsConfig: newConfig
+    };
+
+    const newState: AIServiceState = {
+      mode: this.currentState.mode,
+      features: newFeatures,
+      lastUpdated: Date.now()
+    };
+
+    return await this.setState(newState);
+  }
+
+  /**
+   * 设置单个工具启用状态
+   */
+  async setToolEnabled(toolName: string, enabled: boolean): Promise<StateValidationResult> {
+    const currentConfig = this.getMCPToolsConfig() || this.getDefaultMCPConfig();
+    const newEnabledTools: Record<string, boolean> = {};
+    const currentEntries = Object.entries(currentConfig.enabledTools);
+    for (let i = 0; i < currentEntries.length; i++) {
+      const entry = currentEntries[i];
+      newEnabledTools[entry[0]] = entry[1];
+    }
+    newEnabledTools[toolName] = enabled;
+
+    const newConfig: MCPServiceFeatures = {
+      globalEnabled: currentConfig.globalEnabled,
+      enabledTools: newEnabledTools,
+      toolUsageTracking: currentConfig.toolUsageTracking,
+      toolConfigVersion: currentConfig.toolConfigVersion
+    };
+
+    return await this.setMCPToolsConfig(newConfig);
+  }
+
+  /**
+   * 检查工具是否启用
+   */
+  isToolEnabled(toolName: string): boolean {
+    const config = this.getMCPToolsConfig();
+    if (!config || !config.globalEnabled) {
+      return false;
+    }
+
+    return config.enabledTools[toolName] ?? true; // 默认启用
+  }
+
+  /**
+   * 批量设置工具启用状态
+   */
+  async setMultipleToolsEnabled(toolStates: Record<string, boolean>): Promise<StateValidationResult> {
+    const currentConfig = this.getMCPToolsConfig() || this.getDefaultMCPConfig();
+    const newEnabledTools: Record<string, boolean> = {};
+
+    // 复制现有工具状态
+    const currentEntries = Object.entries(currentConfig.enabledTools);
+    for (let i = 0; i < currentEntries.length; i++) {
+      const entry = currentEntries[i];
+      newEnabledTools[entry[0]] = entry[1];
+    }
+
+    // 更新指定工具状态
+    const toolStateEntries = Object.entries(toolStates);
+    for (let i = 0; i < toolStateEntries.length; i++) {
+      const entry = toolStateEntries[i];
+      newEnabledTools[entry[0]] = entry[1];
+    }
+
+    const newConfig: MCPServiceFeatures = {
+      globalEnabled: currentConfig.globalEnabled,
+      enabledTools: newEnabledTools,
+      toolUsageTracking: currentConfig.toolUsageTracking,
+      toolConfigVersion: currentConfig.toolConfigVersion
+    };
+
+    return await this.setMCPToolsConfig(newConfig);
+  }
+
+  /**
+   * 启用所有工具
+   */
+  async enableAllTools(): Promise<StateValidationResult> {
+    const currentConfig = this.getMCPToolsConfig() || this.getDefaultMCPConfig();
+    const newEnabledTools: Record<string, boolean> = {};
+
+    // 获取所有已知工具并启用
+    for (const toolName of Object.keys(currentConfig.enabledTools)) {
+      newEnabledTools[toolName] = true;
+    }
+
+    const newConfig: MCPServiceFeatures = {
+      globalEnabled: currentConfig.globalEnabled,
+      enabledTools: newEnabledTools,
+      toolUsageTracking: currentConfig.toolUsageTracking,
+      toolConfigVersion: currentConfig.toolConfigVersion
+    };
+
+    return await this.setMCPToolsConfig(newConfig);
+  }
+
+  /**
+   * 禁用所有工具
+   */
+  async disableAllTools(): Promise<StateValidationResult> {
+    const currentConfig = this.getMCPToolsConfig() || this.getDefaultMCPConfig();
+    const newEnabledTools: Record<string, boolean> = {};
+
+    // 获取所有已知工具并禁用
+    for (const toolName of Object.keys(currentConfig.enabledTools)) {
+      newEnabledTools[toolName] = false;
+    }
+
+    const newConfig: MCPServiceFeatures = {
+      globalEnabled: currentConfig.globalEnabled,
+      enabledTools: newEnabledTools,
+      toolUsageTracking: currentConfig.toolUsageTracking,
+      toolConfigVersion: currentConfig.toolConfigVersion
+    };
+
+    return await this.setMCPToolsConfig(newConfig);
+  }
+
+  /**
+   * 同步MCP配置到AppStorage
+   */
+  async syncMCPConfigToStorage(): Promise<void> {
+    const config = this.getMCPToolsConfig();
+    if (config) {
+      try {
+        await AppStorage.updateMCPToolsConfig({
+          enabledTools: config.enabledTools,
+          globalEnabled: config.globalEnabled,
+          toolUsageStats: {},
+          lastModified: Date.now()
+        });
+
+        Logger.info('AIServiceStateManager', 'MCP配置已同步到存储');
+      } catch (error) {
+        Logger.error('AIServiceStateManager', `同步MCP配置失败: ${(error as Error).message}`);
+        throw new Error(`同步MCP配置失败: ${(error as Error).message}`);
+      }
+    }
+  }
+
+  /**
+   * 从AppStorage加载MCP配置
+   */
+  async loadMCPConfigFromStorage(): Promise<void> {
+    try {
+      const storageConfig = await AppStorage.getMCPToolsConfig();
+
+      const mcpConfig: MCPServiceFeatures = {
+        globalEnabled: storageConfig.globalEnabled,
+        enabledTools: storageConfig.enabledTools,
+        toolUsageTracking: true,
+        toolConfigVersion: 1
+      };
+
+      await this.setMCPToolsConfig(mcpConfig);
+
+      Logger.info('AIServiceStateManager', 'MCP配置已从存储加载');
+    } catch (error) {
+      Logger.error('AIServiceStateManager', `加载MCP配置失败: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * 获取默认MCP配置
+   */
+  private getDefaultMCPConfig(): MCPServiceFeatures {
+    return {
+      globalEnabled: true,
+      enabledTools: {
+        'calculator': true,
+        'app_launcher': true,
+        'weather_service': true
+      },
+      toolUsageTracking: true,
+      toolConfigVersion: 1
+    };
+  }
+
+  /**
+   * 重置MCP配置为默认值
+   */
+  async resetMCPConfig(): Promise<StateValidationResult> {
+    const defaultConfig = this.getDefaultMCPConfig();
+    return await this.setMCPToolsConfig(defaultConfig);
   }
 }
