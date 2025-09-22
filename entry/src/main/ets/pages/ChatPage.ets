@@ -89,6 +89,7 @@ struct ChatPage {
   @Local showSideDrawer: boolean = false;
   @Local enableWebSearch: boolean = false; // 联网搜索开关状态
   @Local enableDeepThinking: boolean = false; // 深度思考开关状态
+  @Local enableMCPTools: boolean = true; // MCP工具开关状态
   @Local showToolboxPanel: boolean = false; // 工具箱面板显示状态
   @Local toolboxPanelOpacity: number = 0.0; // 工具箱面板透明度
   @Local toolboxPanelTranslateY: number = 400; // 工具箱面板Y轴位移
@@ -334,12 +335,14 @@ struct ChatPage {
       const currentFeatures = this.chatViewModel.apiManager.getCurrentFeatures();
       this.enableWebSearch = currentFeatures.enableWebSearch;
       this.enableDeepThinking = currentFeatures.enableDeepThinking;
-      Logger.info('ChatPage', `功能状态同步完成: 联网搜索=${this.enableWebSearch}, 深度思考=${this.enableDeepThinking}, MCP工具=${currentFeatures.enableMCPTools}`);
+      this.enableMCPTools = currentFeatures.enableMCPTools;
+      Logger.info('ChatPage', `功能状态同步完成: 联网搜索=${this.enableWebSearch}, 深度思考=${this.enableDeepThinking}, MCP工具=${this.enableMCPTools}`);
     } catch (error) {
       Logger.error('ChatPage', `同步功能状态失败: ${error}`);
       // 使用默认状态
       this.enableWebSearch = false;
       this.enableDeepThinking = false;
+      this.enableMCPTools = true;
     }
     
     // 添加头像设置监听器
@@ -2172,6 +2175,38 @@ struct ChatPage {
     }
   }
 
+  private async toggleMCPTools(): Promise<void> {
+    try {
+      const currentState = !this.enableMCPTools;
+      const result = await this.chatViewModel.apiManager.setFeature('enableMCPTools', currentState);
+
+      if (result) {
+        // 功能不支持
+        promptAction.showToast({
+          message: `❗ ${result}`,
+          duration: 2000
+        });
+        return;
+      }
+
+      // 更新成功，同步本地状态
+      this.enableMCPTools = currentState;
+      Logger.info('ChatPage', `MCP工具状态切换: ${this.enableMCPTools}`);
+
+      // 显示状态切换提示
+      promptAction.showToast({
+        message: this.enableMCPTools ? '🔧 MCP工具已启用' : '🚫 MCP工具已禁用',
+        duration: 1500
+      });
+    } catch (error) {
+      Logger.error('ChatPage', `切换MCP工具失败: ${error}`);
+      promptAction.showToast({
+        message: '❗ MCP工具切换失败，请稍后重试',
+        duration: 1500
+      });
+    }
+  }
+
   private async toggleMessageLayout(): Promise<void> {
     const previousLayout = this.useModernMessageLayout;
     this.useModernMessageLayout = !this.useModernMessageLayout;
@@ -2753,6 +2788,19 @@ struct ChatPage {
         action: async () => {
           Logger.info('ChatPage', '执行压缩上下文操作');
           await this.compactMessages();
+        }
+      },
+      {
+        id: 'mcp_tools',
+        title: this.enableMCPTools ? '关闭 MCP 工具' : '启用 MCP 工具',
+        description: this.enableMCPTools ? 'MCP 工具已启用，点击关闭本地工具支持' : 'MCP 工具已禁用，点击启用本地工具支持',
+        icon: '🔧',
+        color: this.enableMCPTools ? '#FF4757' : '#9C27B0',
+        backgroundColor: this.enableMCPTools ? 'rgba(255, 71, 87, 0.1)' : 'rgba(156, 39, 176, 0.1)',
+        enabled: true,
+        action: async () => {
+          Logger.info('ChatPage', '执行MCP工具开关操作');
+          await this.toggleMCPTools();
         }
       },
       {

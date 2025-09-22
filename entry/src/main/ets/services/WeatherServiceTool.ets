@@ -182,11 +182,11 @@ export class WeatherServiceTool {
    */
   private validateParameters(params: WeatherQueryParameters): WeatherServiceValidationResult {
     // 必填参数验证
-    if (!params.queryType || !Object.values(WeatherQueryType).includes(params.queryType)) {
+    if (!params.queryType || !this.isValidWeatherQueryType(params.queryType)) {
       return { isValid: false, error: 'queryType参数缺失或无效' };
     }
 
-    if (!params.locationType || !Object.values(LocationQueryType).includes(params.locationType)) {
+    if (!params.locationType || !this.isValidLocationQueryType(params.locationType)) {
       return { isValid: false, error: 'locationType参数缺失或无效' };
     }
 
@@ -537,6 +537,28 @@ export class WeatherServiceTool {
       }],
       isError: true
     };
+  }
+
+  /**
+   * 验证天气查询类型
+   */
+  private isValidWeatherQueryType(value: string): boolean {
+    return value === WeatherQueryType.CURRENT ||
+           value === WeatherQueryType.DAILY ||
+           value === WeatherQueryType.HOURLY ||
+           value === WeatherQueryType.MINUTE ||
+           value === WeatherQueryType.ALERTS ||
+           value === WeatherQueryType.INDICES ||
+           value === WeatherQueryType.TIDES;
+  }
+
+  /**
+   * 验证位置查询类型
+   */
+  private isValidLocationQueryType(value: string): boolean {
+    return value === LocationQueryType.COORDINATES ||
+           value === LocationQueryType.CITY_NAME ||
+           value === LocationQueryType.AUTO_LOCATION;
   }
 }
 

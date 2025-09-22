@@ -16,6 +16,7 @@ import {
 } from '../types/MCPTypes';
 import { LocalToolManager } from '../services/LocalToolManager';
 import { AppContext } from '../utils/AppContext';
+import { AIServiceStateManager } from '../utils/AIServiceStateManager';
 import { window } from '@kit.ArkUI';
 
 interface ToolCategoryInfo {
@@ -41,18 +42,31 @@ struct MCPSettingsPage {
   @Local private statusBarHeight: number = 44; // 状态栏高度，动态获取
 
   private localToolManager: LocalToolManager | null = null;
+  private aiServiceStateManager: AIServiceStateManager | null = null;
 
   aboutToAppear(): void {
     try {
       const context = AppContext.getInstance().getContext();
       if (context) {
         this.localToolManager = LocalToolManager.getInstance();
+        this.aiServiceStateManager = AIServiceStateManager.getInstance();
         this.loadAvailableTools();
+        this.loadMCPState();
       }
       this.initializeStatusBarHeight();
       Logger.info('MCPSettingsPage', 'MCP Settings page initialized');
     } catch (error) {
       Logger.error('MCPSettingsPage', 'Failed to initialize', error);
+    }
+  }
+
+  onPageShow(): void {
+    try {
+      // 页面显示时重新加载MCP状态，确保状态同步
+      this.loadMCPState();
+      Logger.info('MCPSettingsPage', 'Page shown, MCP state reloaded');
+    } catch (error) {
+      Logger.error('MCPSettingsPage', 'Failed to reload MCP state on page show', error);
     }
   }
 
@@ -80,6 +94,39 @@ struct MCPSettingsPage {
     if (this.localToolManager) {
       this.availableTools = this.localToolManager.getAvailableTools();
       Logger.info('MCPSettingsPage', `Loaded ${this.availableTools.length} tools`);
+    }
+  }
+
+  /**
+   * 加载MCP状态
+   */
+  private loadMCPState(): void {
+    if (this.aiServiceStateManager) {
+      try {
+        const currentFeatures = this.aiServiceStateManager.getCurrentFeatures();
+        this.mcpEnabled = currentFeatures.enableMCPTools;
+        Logger.info('MCPSettingsPage', `MCP状态加载完成: ${this.mcpEnabled}`);
+      } catch (error) {
+        Logger.error('MCPSettingsPage', `加载MCP状态失败: ${error}`);
+        // 使用默认值
+        this.mcpEnabled = true;
+      }
+    }
+  }
+
+  /**
+   * 保存MCP状态
+   */
+  private async saveMCPState(enabled: boolean): Promise<void> {
+    if (this.aiServiceStateManager) {
+      try {
+        await this.aiServiceStateManager.setFeature('enableMCPTools', enabled);
+        Logger.info('MCPSettingsPage', `MCP状态保存成功: ${enabled}`);
+      } catch (error) {
+        Logger.error('MCPSettingsPage', `保存MCP状态失败: ${error}`);
+        // 回滚UI状态
+        this.mcpEnabled = !enabled;
+      }
     }
   }
 
@@ -226,9 +273,11 @@ struct MCPSettingsPage {
       }
       .margin({ top: this.statusBarHeight })
 
+      // MCP控制区域 - 始终在页面上方
+      this.buildMCPControlSection()
+
       Scroll() {
         Column({ space: 16 }) {
-          this.buildMCPControlSection()
           this.buildMCPToolsSection()
         }
         .width('100%')
@@ -293,6 +342,7 @@ struct MCPSettingsPage {
         Toggle({ type: ToggleType.Switch, isOn: this.mcpEnabled })
           .onChange((isOn: boolean) => {
             this.mcpEnabled = isOn;
+            this.saveMCPState(isOn);
             Logger.info('MCPSettingsPage', `MCP tools ${isOn ? 'enabled' : 'disabled'}`);
           })
       }
@@ -311,7 +361,8 @@ struct MCPSettingsPage {
           .lineHeight(18)
       }
     }
-    .width('100%')
+    .width('95%')
+    .margin({ left: 16, right: 16, bottom: 16 })
     .padding(16)
     .backgroundColor($r('app.color.surface_color'))
     .borderRadius(12)
