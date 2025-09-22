@@ -8,6 +8,7 @@ import {
 import { Logger } from '../utils/Logger';
 import CalculatorTool from './CalculatorTool';
 import AppLauncherTool from './AppLauncherTool';
+import WeatherServiceTool from './WeatherServiceTool';
 
 /**
  * 本地工具执行器接口
@@ -62,6 +63,21 @@ class AppLauncherToolExecutor implements LocalToolExecutor {
 }
 
 /**
+ * 天气服务工具执行器
+ */
+class WeatherServiceToolExecutor implements LocalToolExecutor {
+  private weatherServiceTool: WeatherServiceTool;
+
+  constructor(weatherServiceTool: WeatherServiceTool) {
+    this.weatherServiceTool = weatherServiceTool;
+  }
+
+  async execute(request: ToolCallRequest): Promise<ToolCallResult> {
+    return this.weatherServiceTool.execute(request);
+  }
+}
+
+/**
  * 本地工具管理器
  * 管理和执行本地MCP工具
  */
@@ -76,6 +92,7 @@ export class LocalToolManager {
     this.registerAppManagementTools();
     this.registerCalculatorTool();
     this.registerAppLauncherTool();
+    this.registerWeatherServiceTool();
     Logger.info('LocalToolManager', 'Local tool manager initialized');
   }
 
@@ -152,6 +169,20 @@ export class LocalToolManager {
     this.toolExecutors.set(toolDefinition.name, executor);
 
     Logger.info('LocalToolManager', `App launcher tool registered: ${toolDefinition.name}`);
+  }
+
+  /**
+   * 注册天气服务工具
+   */
+  private registerWeatherServiceTool(): void {
+    const weatherServiceTool = WeatherServiceTool.getInstance(this.context);
+    const toolDefinition = weatherServiceTool.getToolDefinition();
+
+    this.registeredTools.set(toolDefinition.name, toolDefinition);
+    const executor: LocalToolExecutor = new WeatherServiceToolExecutor(weatherServiceTool);
+    this.toolExecutors.set(toolDefinition.name, executor);
+
+    Logger.info('LocalToolManager', `Weather service tool registered: ${toolDefinition.name}`);
   }
 
   /**

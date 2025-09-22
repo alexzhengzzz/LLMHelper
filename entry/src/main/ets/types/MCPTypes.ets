@@ -474,3 +474,222 @@ export interface AppLauncherJSONSchema extends JSONSchema {
   required: Array<string>;
   properties: Record<string, JSONSchema>;
 }
+
+// ======================== 天气服务相关类型定义 ========================
+
+/**
+ * 天气查询类型枚举
+ */
+export enum WeatherQueryType {
+  CURRENT = 'current',
+  DAILY = 'daily',
+  HOURLY = 'hourly',
+  MINUTE = 'minute',
+  ALERTS = 'alerts',
+  INDICES = 'indices',
+  TIDES = 'tides'
+}
+
+/**
+ * 位置查询方式枚举
+ */
+export enum LocationQueryType {
+  COORDINATES = 'coordinates',
+  CITY_NAME = 'city_name',
+  AUTO_LOCATION = 'auto_location'
+}
+
+/**
+ * 天气查询参数接口
+ */
+export interface WeatherQueryParameters {
+  queryType: WeatherQueryType;
+  locationType: LocationQueryType;
+  latitude?: number;
+  longitude?: number;
+  cityName?: string;
+  days?: number;
+  hours?: number;
+}
+
+/**
+ * 位置信息接口
+ */
+export interface WeatherLocation {
+  latitude: number;
+  longitude: number;
+  cityName?: string;
+  address?: string;
+}
+
+/**
+ * 当前天气数据接口
+ */
+export interface CurrentWeatherData {
+  temperature: number;
+  humidity: number;
+  pressure: number;
+  windSpeed: number;
+  windDirection: number;
+  weatherCondition: string;
+  weatherDescription: string;
+  visibility: number;
+  uvIndex: number;
+  feelLike: number;
+  updateTime: string;
+}
+
+/**
+ * 每日天气预报接口
+ */
+export interface DailyWeatherData {
+  date: string;
+  maxTemperature: number;
+  minTemperature: number;
+  weatherCondition: string;
+  weatherDescription: string;
+  windSpeed: number;
+  windDirection: number;
+  humidity: number;
+  pressure: number;
+  uvIndex: number;
+  sunrise: string;
+  sunset: string;
+}
+
+/**
+ * 每小时天气预报接口
+ */
+export interface HourlyWeatherData {
+  time: string;
+  temperature: number;
+  humidity: number;
+  pressure: number;
+  windSpeed: number;
+  windDirection: number;
+  weatherCondition: string;
+  weatherDescription: string;
+  precipitation: number;
+}
+
+/**
+ * 分钟级降水预报接口
+ */
+export interface MinutePrecipitationData {
+  time: string;
+  intensity: number;
+  description: string;
+}
+
+/**
+ * 天气预警信息接口
+ */
+export interface WeatherAlertData {
+  alertId: string;
+  title: string;
+  description: string;
+  severity: string;
+  certainty: string;
+  urgency: string;
+  startTime: string;
+  endTime: string;
+  areas: Array<string>;
+}
+
+/**
+ * 生活指数接口
+ */
+export interface WeatherIndicesData {
+  name: string;
+  level: string;
+  category: string;
+  description: string;
+  advice: string;
+}
+
+/**
+ * 潮汐信息接口
+ */
+export interface TideData {
+  time: string;
+  height: number;
+  type: string;
+  description: string;
+}
+
+/**
+ * 天气服务响应数据接口
+ */
+export interface WeatherServiceResponse {
+  location: WeatherLocation;
+  current?: CurrentWeatherData;
+  daily?: Array<DailyWeatherData>;
+  hourly?: Array<HourlyWeatherData>;
+  minute?: Array<MinutePrecipitationData>;
+  alerts?: Array<WeatherAlertData>;
+  indices?: Array<WeatherIndicesData>;
+  tides?: Array<TideData>;
+  requestTime: string;
+}
+
+/**
+ * 天气服务权限枚举
+ */
+export enum WeatherServicePermission {
+  LOCATION = 'ohos.permission.APPROXIMATELY_LOCATION',
+  INTERNET = 'ohos.permission.INTERNET'
+}
+
+/**
+ * 天气服务验证结果接口
+ */
+export interface WeatherServiceValidationResult {
+  isValid: boolean;
+  error?: string;
+}
+
+/**
+ * 天气服务权限检查结果接口
+ */
+export interface WeatherServicePermissionCheck {
+  hasPermissions: boolean;
+  missingPermissions?: Array<WeatherServicePermission>;
+  error?: string;
+}
+
+/**
+ * 通用执行结果接口
+ */
+export interface GenericExecutionResult<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  errorCode?: string;
+}
+
+/**
+ * 天气服务执行结果接口
+ */
+export interface WeatherServiceExecutionResult extends GenericExecutionResult<WeatherServiceResponse> {}
+
+/**
+ * JSON Schema 扩展接口 - 用于天气服务工具
+ */
+export interface WeatherServiceJSONSchema extends JSONSchema {
+  type: string;
+  required: Array<string>;
+  properties: Record<string, JSONSchema>;
+}
+
+/**
+ * 城市坐标接口
+ */
+export interface CityCoordinates {
+  lat: number;
+  lon: number;
+}
+
+/**
+ * 城市坐标映射接口
+ */
+export interface CityCoordinatesMap extends Record<string, CityCoordinates> {}

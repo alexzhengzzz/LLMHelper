@@ -62,7 +62,7 @@ export class StatePresets {
     features: {
       enableWebSearch: false,
       enableDeepThinking: false,
-      enableMCPTools: false
+      enableMCPTools: true
     },
     lastUpdated: 0
   };

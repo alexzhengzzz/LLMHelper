@@ -44,6 +44,16 @@
         }
       },
       {
+        "name": "ohos.permission.APPROXIMATELY_LOCATION",
+        "reason": "$string:app_name",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
         "name": "ohos.permission.READ_MEDIA",
         "reason": "$string:app_name",
         "usedScene": {

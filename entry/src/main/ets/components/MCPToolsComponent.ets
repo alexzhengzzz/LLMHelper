@@ -208,16 +208,16 @@ export struct MCPToolsComponent {
   @Builder
   buildParameterForm() {
     if (this.selectedTool) {
-      Column({ space: 12 }) {
+      Column({ space: 20 }) {
         Text('参数设置')
-          .fontSize(16)
+          .fontSize(18)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .alignSelf(ItemAlign.Start)
 
         this.buildParameterInputs()
 
-        Row({ space: 12 }) {
+        Row({ space: 16 }) {
           Button('重置')
             .type(ButtonType.Normal)
             .backgroundColor(Color.Transparent)
@@ -225,7 +225,7 @@ export struct MCPToolsComponent {
             .borderColor($r('app.color.border_color'))
             .fontColor($r('app.color.text_secondary'))
             .borderRadius(8)
-            .height(40)
+            .height(48)
             .layoutWeight(1)
             .onClick(() => {
               this.resetParams();
@@ -236,7 +236,7 @@ export struct MCPToolsComponent {
             .backgroundColor($r('app.color.primary_color'))
             .fontColor(Color.White)
             .borderRadius(8)
-            .height(40)
+            .height(48)
             .layoutWeight(1)
             .enabled(!this.isExecuting)
             .onClick(() => {
@@ -246,7 +246,7 @@ export struct MCPToolsComponent {
         .width('100%')
       }
       .width('100%')
-      .padding(16)
+      .padding(20)
       .backgroundColor($r('app.color.surface_color'))
       .borderRadius(12)
     }
@@ -277,30 +277,34 @@ export struct MCPToolsComponent {
   @Builder
   buildParameterInput(paramName: string, schema: JSONSchema | undefined) {
     if (schema) {
-      Column({ space: 8 }) {
-        Row() {
-          Text(paramName)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+      Column({ space: 12 }) {
+        Column({ space: 6 }) {
+          Row() {
+            Text(paramName)
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
 
-          if (this.selectedTool?.inputSchema.required?.includes(paramName)) {
-            Text(' *')
-              .fontSize(14)
-              .fontColor('#F44336')
+            if (this.selectedTool?.inputSchema.required?.includes(paramName)) {
+              Text(' *')
+                .fontSize(16)
+                .fontColor('#F44336')
+            }
           }
-
-          Blank()
+          .width('100%')
+          .justifyContent(FlexAlign.Start)
 
           if (schema.description) {
             Text(schema.description)
-              .fontSize(12)
+              .fontSize(14)
               .fontColor($r('app.color.text_secondary'))
-              .maxLines(2)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .lineHeight(20)
+              .width('100%')
+              .textAlign(TextAlign.Start)
           }
         }
         .width('100%')
+        .alignItems(HorizontalAlign.Start)
 
         if (schema.type === 'string' && schema.enum) {
           // 枚举选择
@@ -317,6 +321,13 @@ export struct MCPToolsComponent {
         }
       }
       .width('100%')
+      .padding(16)
+      .backgroundColor($r('app.color.input_background'))
+      .borderRadius(12)
+      .border({
+        width: 1,
+        color: $r('app.color.border_color')
+      })
     }
   }
 
@@ -325,7 +336,7 @@ export struct MCPToolsComponent {
    */
   @Builder
   buildEnumSelector(paramName: string, options: Array<string>) {
-    Row({ space: 8 }) {
+    Flex({ wrap: FlexWrap.Wrap }) {
       ForEach(options, (option: string) => {
         Button(option)
           .type(ButtonType.Normal)
@@ -336,9 +347,11 @@ export struct MCPToolsComponent {
           .borderWidth(1)
           .borderColor(this.toolParams[paramName] === option ?
             $r('app.color.primary_color') : $r('app.color.border_color'))
-          .borderRadius(6)
-          .fontSize(12)
-          .height(32)
+          .borderRadius(8)
+          .fontSize(14)
+          .height(44)
+          .padding({ left: 16, right: 16 })
+          .margin({ right: 8, bottom: 8 })
           .onClick(() => {
             this.toolParams[paramName] = option;
           })
@@ -354,12 +367,16 @@ export struct MCPToolsComponent {
   buildBooleanToggle(paramName: string) {
     Row() {
       Toggle({ type: ToggleType.Switch, isOn: this.toolParams[paramName] as boolean || false })
+        .width(60)
+        .height(32)
         .onChange((isOn: boolean) => {
           this.toolParams[paramName] = isOn;
         })
     }
     .width('100%')
+    .height(44)
     .justifyContent(FlexAlign.Start)
+    .alignItems(VerticalAlign.Center)
   }
 
   /**
@@ -372,10 +389,15 @@ export struct MCPToolsComponent {
       text: this.toolParams[paramName]?.toString() || ''
     })
       .type(InputType.Number)
-      .fontSize(14)
-      .backgroundColor($r('app.color.input_background'))
+      .fontSize(16)
+      .backgroundColor(Color.White)
       .borderRadius(8)
-      .height(40)
+      .height(48)
+      .padding({ left: 16, right: 16 })
+      .border({
+        width: 1,
+        color: $r('app.color.border_color')
+      })
       .onChange((value: string) => {
         const numValue = parseFloat(value);
         if (!isNaN(numValue)) {
@@ -399,13 +421,18 @@ export struct MCPToolsComponent {
   @Builder
   buildTextInput(paramName: string, schema: JSONSchema) {
     TextInput({
-      placeholder: schema.description || `输入${paramName}`,
+      placeholder: `请输入${paramName}`,
       text: this.toolParams[paramName] as string || ''
     })
-      .fontSize(14)
-      .backgroundColor($r('app.color.input_background'))
+      .fontSize(16)
+      .backgroundColor(Color.White)
       .borderRadius(8)
-      .height(40)
+      .height(48)
+      .padding({ left: 16, right: 16 })
+      .border({
+        width: 1,
+        color: $r('app.color.border_color')
+      })
       .onChange((value: string) => {
         if (value.trim()) {
           this.toolParams[paramName] = value;
@@ -458,24 +485,29 @@ export struct MCPToolsComponent {
       })
 
       Scroll() {
-        Column({ space: 16 }) {
+        Column({ space: 20 }) {
           // 搜索和分类筛选
-          Column({ space: 12 }) {
+          Column({ space: 16 }) {
             // 搜索框
             TextInput({
               placeholder: '搜索工具...',
               text: this.searchText
             })
-              .fontSize(14)
-              .backgroundColor($r('app.color.input_background'))
+              .fontSize(16)
+              .backgroundColor(Color.White)
               .borderRadius(8)
-              .height(40)
+              .height(48)
+              .padding({ left: 16, right: 16 })
+              .border({
+                width: 1,
+                color: $r('app.color.border_color')
+              })
               .onChange((value: string) => {
                 this.searchText = value;
               })
 
             // 分类标签
-            Row({ space: 8 }) {
+            Flex({ wrap: FlexWrap.Wrap }) {
               ForEach(this.getToolCategories(), (category: ToolCategoryInfo) => {
                 Button(`${category.name} (${category.count})`)
                   .type(ButtonType.Normal)
@@ -487,8 +519,10 @@ export struct MCPToolsComponent {
                   .borderColor(this.selectedCategory === category.key ?
                     $r('app.color.primary_color') : $r('app.color.border_color'))
                   .borderRadius(20)
-                  .fontSize(12)
-                  .height(32)
+                  .fontSize(14)
+                  .height(36)
+                  .padding({ left: 16, right: 16 })
+                  .margin({ right: 8, bottom: 8 })
                   .onClick(() => {
                     this.selectedCategory = category.key;
                   })
@@ -497,74 +531,78 @@ export struct MCPToolsComponent {
             .width('100%')
           }
           .width('100%')
-          .padding(16)
+          .padding(20)
           .backgroundColor($r('app.color.surface_color'))
           .borderRadius(12)
 
           // 工具列表
-          Column({ space: 8 }) {
+          Column({ space: 16 }) {
             Text(`可用工具 (${this.getFilteredTools().length})`)
-              .fontSize(16)
+              .fontSize(18)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
               .alignSelf(ItemAlign.Start)
 
             ForEach(this.getFilteredTools(), (tool: MCPTool) => {
-              Row({ space: 12 }) {
-                Column({ space: 4 }) {
-                  Text(tool.name)
-                    .fontSize(14)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor($r('app.color.text_primary'))
-                    .alignSelf(ItemAlign.Start)
+              Column({ space: 16 }) {
+                Row({ space: 16 }) {
+                  Column({ space: 8 }) {
+                    Text(tool.name)
+                      .fontSize(16)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor($r('app.color.text_primary'))
+                      .alignSelf(ItemAlign.Start)
 
-                  if (tool.description) {
-                    Text(tool.description)
-                      .fontSize(12)
+                    Text(`分类: ${this.getCategoryDisplayName(this.getToolCategory(tool.name))}`)
+                      .fontSize(13)
                       .fontColor($r('app.color.text_secondary'))
-                      .maxLines(2)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
                       .alignSelf(ItemAlign.Start)
                   }
+                  .layoutWeight(1)
+                  .alignItems(HorizontalAlign.Start)
 
-                  Text(`分类: ${this.getCategoryDisplayName(this.getToolCategory(tool.name))}`)
-                    .fontSize(11)
-                    .fontColor($r('app.color.text_secondary'))
-                    .alignSelf(ItemAlign.Start)
+                  Button(this.selectedTool?.name === tool.name ? '已选择' : '选择')
+                    .type(ButtonType.Normal)
+                    .backgroundColor(this.selectedTool?.name === tool.name ?
+                      $r('app.color.primary_color') : Color.Transparent)
+                    .fontColor(this.selectedTool?.name === tool.name ?
+                      Color.White : $r('app.color.primary_color'))
+                    .borderWidth(1)
+                    .borderColor($r('app.color.primary_color'))
+                    .borderRadius(8)
+                    .fontSize(14)
+                    .height(40)
+                    .padding({ left: 20, right: 20 })
+                    .onClick(() => {
+                      this.selectedTool = tool;
+                      this.resetParams();
+                    })
                 }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Start)
+                .width('100%')
 
-                Button('选择')
-                  .type(ButtonType.Normal)
-                  .backgroundColor(this.selectedTool?.name === tool.name ?
-                    $r('app.color.primary_color') : Color.Transparent)
-                  .fontColor(this.selectedTool?.name === tool.name ?
-                    Color.White : $r('app.color.primary_color'))
-                  .borderWidth(1)
-                  .borderColor($r('app.color.primary_color'))
-                  .borderRadius(6)
-                  .fontSize(12)
-                  .height(32)
-                  .onClick(() => {
-                    this.selectedTool = tool;
-                    this.resetParams();
-                  })
+                if (tool.description) {
+                  Text(tool.description)
+                    .fontSize(14)
+                    .fontColor($r('app.color.text_secondary'))
+                    .lineHeight(20)
+                    .width('100%')
+                    .textAlign(TextAlign.Start)
+                }
               }
               .width('100%')
-              .padding(12)
+              .padding(20)
               .backgroundColor(this.selectedTool?.name === tool.name ?
-                $r('app.color.surface_color') : $r('app.color.background_color'))
-              .borderRadius(8)
+                $r('app.color.surface_color') : Color.White)
+              .borderRadius(12)
               .border({
-                width: 1,
+                width: 2,
                 color: this.selectedTool?.name === tool.name ?
                   $r('app.color.primary_color') : $r('app.color.border_color')
               })
             });
           }
           .width('100%')
-          .padding(16)
+          .padding(20)
           .backgroundColor($r('app.color.surface_color'))
           .borderRadius(12)
 
@@ -575,10 +613,10 @@ export struct MCPToolsComponent {
 
           // 执行结果
           if (this.showResult && this.executionResult) {
-            Column({ space: 12 }) {
+            Column({ space: 16 }) {
               Row() {
                 Text('执行结果')
-                  .fontSize(16)
+                  .fontSize(18)
                   .fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_primary'))
                   .layoutWeight(1)
@@ -587,8 +625,9 @@ export struct MCPToolsComponent {
                   .type(ButtonType.Normal)
                   .backgroundColor(Color.Transparent)
                   .fontColor($r('app.color.text_secondary'))
-                  .fontSize(12)
-                  .height(32)
+                  .fontSize(14)
+                  .height(40)
+                  .padding({ left: 16, right: 16 })
                   .onClick(() => {
                     this.showResult = false;
                   })
@@ -596,60 +635,71 @@ export struct MCPToolsComponent {
               .width('100%')
 
               Scroll() {
-                Column({ space: 8 }) {
+                Column({ space: 12 }) {
                   ForEach(this.executionResult!.content, (content: TextContent | ImageContent) => {
                     if (content.type === 'text' && (content as TextContent).text) {
                       Text((content as TextContent).text)
-                        .fontSize(12)
+                        .fontSize(14)
                         .fontColor(this.executionResult!.isError ?
                           '#F44336' : $r('app.color.text_primary'))
                         .backgroundColor(this.executionResult!.isError ?
                           '#FFF5F5' : $r('app.color.code_background'))
-                        .padding(8)
-                        .borderRadius(6)
+                        .padding(16)
+                        .borderRadius(8)
                         .width('100%')
                         .textAlign(TextAlign.Start)
                         .copyOption(CopyOptions.InApp)
+                        .lineHeight(20)
                     }
                   });
                 }
                 .width('100%')
               }
-              .height(200)
+              .constraintSize({ minHeight: 120, maxHeight: 300 })
             }
             .width('100%')
-            .padding(16)
+            .padding(20)
             .backgroundColor($r('app.color.surface_color'))
             .borderRadius(12)
             .border({
-              width: 1,
-              color: this.executionResult.isError ? '#F44336' : $r('app.color.border_color')
+              width: 2,
+              color: this.executionResult.isError ? '#F44336' : '#4CAF50'
             })
           }
 
           // 加载状态
           if (this.isExecuting) {
-            Column({ space: 12 }) {
+            Column({ space: 16 }) {
               LoadingProgress()
-                .width(32)
-                .height(32)
+                .width(40)
+                .height(40)
                 .color($r('app.color.primary_color'))
 
               Text('正在执行工具...')
+                .fontSize(16)
+                .fontColor($r('app.color.text_primary'))
+                .fontWeight(FontWeight.Medium)
+
+              Text('请稍候，工具正在处理您的请求')
                 .fontSize(14)
                 .fontColor($r('app.color.text_secondary'))
             }
             .width('100%')
-            .height(100)
+            .height(120)
             .justifyContent(FlexAlign.Center)
             .backgroundColor($r('app.color.surface_color'))
             .borderRadius(12)
+            .border({
+              width: 1,
+              color: $r('app.color.primary_color')
+            })
           }
         }
         .width('100%')
-        .padding(16)
+        .padding(20)
       }
       .layoutWeight(1)
+      .scrollBar(BarState.Auto)
     }
     .width('100%')
     .height('100%')
