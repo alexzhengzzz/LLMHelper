@@ -93,6 +93,9 @@ export class Message {
   @Trace isPlaying?: boolean = false; // 是否正在播放语音
   @Trace canPlayAudio?: boolean = false; // 是否可以播放语音（只有assistant消息可播放）
   @Trace toolStatus?: string = 'idle'; // 工具调用状态："idle", "calling", "completed", "failed"
+  @Trace toolType?: string = ''; // 工具类型："search", "mcp", "function", "code_execution"
+  @Trace toolName?: string = ''; // 工具名称，显示具体调用的工具
+  @Trace mcpToolNames?: string[] = []; // MCP工具名称列表，支持多个工具调用
   @Trace webUsed?: boolean = false; // 是否使用了网络搜索
   @Trace searchInfo?: string = ''; // 网络搜索信息（简化版）
   @Trace searchDetails?: string = ''; // 网络搜索详细信息（用于气泡显示）
@@ -108,6 +111,9 @@ export class Message {
     // 只有assistant消息可以播放语音
     this.canPlayAudio = role === MessageRole.ASSISTANT;
     this.isPlaying = false;
+    this.toolType = '';
+    this.toolName = '';
+    this.mcpToolNames = [];
     this.webUsed = false;
     this.searchInfo = '';
     this.searchDetails = '';

@@ -2,7 +2,7 @@
  * 深度思考服务 - 实现多轮推理引擎
  */
 
-import { Message, MessageRole, ThinkingStep, ThinkingStatus, StepStatus, SimpleMessage } from '../models/ChatModels';
+import { Message, MessageRole, ThinkingStep, ThinkingStatus, StepStatus, SimpleMessage, ToolCall } from '../models/ChatModels';
 import { APIManager, APIMode } from './APIManager';
 import { ChatRequest as APIChatRequest, ChatMessage as APIChatMessage } from '../types/APITypes';
 import { Logger } from '../utils/Logger';
@@ -56,6 +56,8 @@ export interface DeepThinkingResult {
   totalTime: number;
   fallbackUsed: boolean;
   error?: string;
+  toolsUsed?: boolean;
+  toolCalls?: ToolCall[];
 }
 
 // 进度回调

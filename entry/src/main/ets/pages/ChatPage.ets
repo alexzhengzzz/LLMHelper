@@ -1109,8 +1109,8 @@ struct ChatPage {
           Column() {
             if (message.isLoading) {
               this.buildLoadingStatus(this.enableDeepThinking ? '🧠 AI正在深度分析，请稍候...' : 'AI正在思考...')
-            } else if (message.toolStatus === 'calling') {
-              this.buildLoadingStatus('🔍 正在搜索网络信息...', true)
+            } else if (message.toolStatus === 'calling' && message.toolType !== 'mcp') {
+              this.buildLoadingStatus(this.getToolCallingText(message), true)
             } else {
               Column() {
                   // 消息内容
@@ -1307,17 +1307,19 @@ struct ChatPage {
               this.buildDeepThinkingInlineStatus(message, '80%')
               if (message.isLoading) {
                 this.buildLoadingStatus(this.enableDeepThinking ? '🧠 AI正在深度分析，请稍候...' : 'AI正在思考...')
-              } else if (message.toolStatus === 'calling') {
-                this.buildLoadingStatus('🔍 正在搜索网络信息...', true)
+              } else if (message.toolStatus === 'calling' && message.toolType !== 'mcp') {
+                this.buildLoadingStatus(this.getToolCallingText(message), true)
               } else {
                 Column() {
-                  // 工具调用状态展示
-                  ToolCallStatusComponent({
-                    message: message,
-                    onSearchDetailsClick: (searchDetails: string) => {
-                      this.showSearchInfoBubble(searchDetails);
-                    }
-                  })
+                  // 工具调用状态展示 - 只在有MCP工具调用时显示
+                  if (message.toolStatus && message.toolStatus !== 'idle' && message.toolType === 'mcp') {
+                    ToolCallStatusComponent({
+                      message: message,
+                      onSearchDetailsClick: (searchDetails: string) => {
+                        this.showSearchInfoBubble(searchDetails);
+                      }
+                    })
+                  }
 
                   // 智能渲染的消息内容
                   SmartTextRenderer({
@@ -2439,6 +2441,26 @@ struct ChatPage {
   }
 
   /**
+   * 获取工具调用中的显示文本
+   */
+  private getToolCallingText(message: Message): string {
+    const toolName = message.toolName ? ` (${message.toolName})` : '';
+
+    switch (message.toolType) {
+      case 'search':
+        return '🔍 正在搜索网络信息...' + toolName;
+      case 'mcp':
+        return '🔧 正在执行MCP工具...' + toolName;
+      case 'function':
+        return '⚡ 正在调用函数...' + toolName;
+      case 'code_execution':
+        return '💻 正在执行代码...' + toolName;
+      default:
+        return message.webUsed ? '🔍 正在搜索网络信息...' : '⚙️ 正在调用工具...';
+    }
+  }
+
+  /**
    * 构建加载状态组件
    */
   @Builder
@@ -2762,19 +2784,6 @@ struct ChatPage {
         action: async () => {
           Logger.info('ChatPage', '执行清空会话操作');
           await this.clearMessages();
-        }
-      },
-      {
-        id: 'toggle_style',
-        title: this.useModernMessageLayout ? '切换到传统样式' : '切换到现代样式',
-        description: this.useModernMessageLayout ? '当前为现代线性布局，可切换回传统消息气泡' : '当前为传统消息气泡，可切换到现代线性布局',
-        icon: this.useModernMessageLayout ? '💬' : '📱',
-        color: this.useModernMessageLayout ? '#3742FA' : '#8E44AD',
-        backgroundColor: this.useModernMessageLayout ? 'rgba(55, 66, 250, 0.1)' : 'rgba(142, 68, 173, 0.1)',
-        enabled: true,
-        action: () => {
-          Logger.info('ChatPage', '执行样式切换操作');
-          this.toggleMessageLayout();
         }
       },
       {

@@ -14,6 +14,7 @@ import { ErrorManager } from '../utils/ErrorManager';
 import { ErrorType, ErrorCode, ErrorLevel, ErrorContext } from '../types/ErrorTypes';
 import { ServerConfigManager, ServerEndpoint } from '../utils/ServerConfigManager';
 import { ToolCallResult } from '../types/MCPTypes';
+import { LocalToolManager } from '../services/LocalToolManager';
 
 // 用于描述从存储中反序列化的消息对象
 interface StoredMessage {
@@ -291,6 +292,25 @@ export class ChatViewModel {
         Logger.info('ChatViewModel', `深度思考完成，总耗时: ${result.totalTime}ms，降级: ${result.fallbackUsed}`);
         assistantMessage.thinkingStatus = ThinkingStatus.COMPLETED;
         assistantMessage.thinkingSteps = result.steps;
+
+        // 处理工具调用结果
+        if (result.toolsUsed && result.toolCalls && result.toolCalls.length > 0) {
+          assistantMessage.toolType = 'mcp';
+          assistantMessage.toolStatus = 'completed';
+
+          // 获取实际执行的工具名称
+          const executedToolNames: string[] = result.toolCalls.map((toolCall: ToolCall) => toolCall.function.name);
+          assistantMessage.mcpToolNames = executedToolNames;
+
+          // 更新工具名称显示，为了向后兼容也设置toolName
+          if (executedToolNames.length === 1) {
+            assistantMessage.toolName = executedToolNames[0];
+          } else if (executedToolNames.length > 1) {
+            assistantMessage.toolName = `${executedToolNames.length}个MCP工具`;
+          }
+
+          Logger.info('ChatViewModel', `深度思考使用了 ${result.toolCalls.length} 个工具: ${executedToolNames.join(', ')}`);
+        }
       },
       onError: (error) => {
         Logger.error('ChatViewModel', `深度思考失败: ${error}`);
@@ -316,7 +336,27 @@ export class ChatViewModel {
       assistantMessage.content = thinkingResult.finalAnswer;
       assistantMessage.thinkingStatus = ThinkingStatus.COMPLETED;
       assistantMessage.thinkingSteps = thinkingResult.steps;
-      Logger.info('ChatViewModel', '深度思考成功完成');
+
+      // 处理工具调用结果
+      if (thinkingResult.toolsUsed && thinkingResult.toolCalls && thinkingResult.toolCalls.length > 0) {
+        assistantMessage.toolType = 'mcp';
+        assistantMessage.toolStatus = 'completed';
+
+        // 获取实际执行的工具名称
+        const executedToolNames: string[] = thinkingResult.toolCalls.map((toolCall: ToolCall) => toolCall.function.name);
+        assistantMessage.mcpToolNames = executedToolNames;
+
+        // 更新工具名称显示，为了向后兼容也设置toolName
+        if (executedToolNames.length === 1) {
+          assistantMessage.toolName = executedToolNames[0];
+        } else if (executedToolNames.length > 1) {
+          assistantMessage.toolName = `${executedToolNames.length}个MCP工具`;
+        }
+
+        Logger.info('ChatViewModel', `深度思考成功完成，使用了 ${thinkingResult.toolCalls.length} 个工具: ${executedToolNames.join(', ')}`);
+      } else {
+        Logger.info('ChatViewModel', '深度思考成功完成');
+      }
     } else {
       // 深度思考失败，回退到简单模式
       Logger.warn('ChatViewModel', `深度思考失败，回退到简单模式: ${thinkingResult.error}`);
@@ -360,10 +400,31 @@ export class ChatViewModel {
         assistantMessage.toolStatus = hybridResponse.response.tool_status;
       }
 
+      // 处理搜索结果
       if (hybridResponse.searchUsed && hybridResponse.searchInfo) {
         assistantMessage.webUsed = true;
+        assistantMessage.toolType = 'search';
+        assistantMessage.toolName = '网络搜索';
         assistantMessage.searchInfo = this.formatSearchInfoSimple(hybridResponse.searchInfo);
         assistantMessage.searchDetails = this.formatSearchInfoDetailed(hybridResponse.searchInfo);
+      }
+
+      // 处理MCP工具调用结果
+      if (hybridResponse.toolsUsed && hybridResponse.toolCalls && hybridResponse.toolCalls.length > 0) {
+        assistantMessage.toolType = 'mcp';
+        assistantMessage.toolStatus = 'completed';
+        // 获取实际执行的工具名称
+        const executedToolNames = hybridResponse.toolCalls.map(toolCall => toolCall.function.name);
+        assistantMessage.mcpToolNames = executedToolNames;
+
+        // 更新工具名称显示，为了向后兼容也设置toolName
+        if (executedToolNames.length === 1) {
+          assistantMessage.toolName = executedToolNames[0];
+        } else if (executedToolNames.length > 1) {
+          assistantMessage.toolName = `${executedToolNames.length}个MCP工具`;
+        }
+
+        Logger.info('ChatViewModel', `MCP工具执行完成: ${executedToolNames.join(', ')}`);
       }
     } else {
       // 服务端模式或直连模式无搜索：使用原有逻辑
@@ -408,6 +469,8 @@ export class ChatViewModel {
 
       if (apiResponse.web_used) {
         assistantMessage.webUsed = true;
+        assistantMessage.toolType = 'search';
+        assistantMessage.toolName = '网络搜索';
         assistantMessage.searchInfo = apiResponse.search_info || '🌐 已使用网络搜索';
         assistantMessage.searchDetails = apiResponse.search_info || '🌐 已使用网络搜索';
       }
@@ -439,9 +502,23 @@ export class ChatViewModel {
         assistantMessage.searchDetails = response.searchInfo.query || '🌐 已使用网络搜索';
       }
 
-      if (response.toolsUsed && response.toolCalls) {
-        // 工具调用信息已包含在response中
-        Logger.info('ChatViewModel', `使用了 ${response.toolCalls.length} 个工具`);
+      if (response.toolsUsed && response.toolCalls && response.toolCalls.length > 0) {
+        // 工具调用信息已包含在response中，更新消息状态
+        assistantMessage.toolType = 'mcp';
+        assistantMessage.toolStatus = 'completed';
+
+        // 获取实际执行的工具名称
+        const executedToolNames = response.toolCalls.map(toolCall => toolCall.function.name);
+        assistantMessage.mcpToolNames = executedToolNames;
+
+        // 更新工具名称显示，为了向后兼容也设置toolName
+        if (executedToolNames.length === 1) {
+          assistantMessage.toolName = executedToolNames[0];
+        } else if (executedToolNames.length > 1) {
+          assistantMessage.toolName = `${executedToolNames.length}个MCP工具`;
+        }
+
+        Logger.info('ChatViewModel', `使用了 ${response.toolCalls.length} 个工具: ${executedToolNames.join(', ')}`);
       }
 
       Logger.info('ChatViewModel', `智能聊天完成，总耗时: ${response.totalTime}ms`);
@@ -842,6 +919,21 @@ export class ChatViewModel {
     assistantMessage.isLoading = true;
     assistantMessage.isDeepThinking = currentFeatures.enableDeepThinking;
     assistantMessage.thinkingStatus = currentFeatures.enableDeepThinking ? ThinkingStatus.ANALYZING : ThinkingStatus.IDLE;
+
+    // 初始化工具调用状态
+    if (currentFeatures.enableWebSearch || currentFeatures.enableMCPTools) {
+      assistantMessage.toolStatus = 'calling';
+      if (currentFeatures.enableWebSearch) {
+        assistantMessage.toolType = 'search';
+        assistantMessage.toolName = '网络搜索';
+      } else if (currentFeatures.enableMCPTools) {
+        assistantMessage.toolType = 'mcp';
+        assistantMessage.toolName = 'MCP工具';
+        // 初始化为空数组，等待实际执行的工具结果
+        assistantMessage.mcpToolNames = [];
+      }
+    }
+
     this.messages.push(assistantMessage);
 
     this.isLoading = true;
@@ -885,9 +977,20 @@ export class ChatViewModel {
   
       const errorMessage = (error as Error).message || '未知错误';
       assistantMessage.content = `发送消息失败: ${errorMessage}`;
+
+      // 错误情况下设置工具调用失败状态
+      if (assistantMessage.toolStatus === 'calling') {
+        assistantMessage.toolStatus = 'failed';
+      }
     } finally {
       assistantMessage.isLoading = false;
       this.isLoading = false;
+
+      // 确保工具调用状态正确结束
+      if (assistantMessage.toolStatus === 'calling') {
+        assistantMessage.toolStatus = 'completed';
+      }
+
       await this.saveMessages();
       
       // 如果助手消息不为空且没有错误，则触发自动播报

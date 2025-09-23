@@ -7,16 +7,6 @@ import { Message, MessageRole } from '../models/ChatModels';
 import { Logger } from '../utils/Logger';
 
 /**
- * 工具调用状态枚举
- */
-export enum ToolCallStatus {
-  IDLE = 'idle',        // 空闲状态
-  CALLING = 'calling',  // 调用中
-  COMPLETED = 'completed', // 调用完成
-  FAILED = 'failed'     // 调用失败
-}
-
-/**
  * 工具调用状态组件
  */
 @ComponentV2
@@ -28,22 +18,73 @@ export struct ToolCallStatusComponent {
    * 获取工具调用状态文本
    */
   private getToolStatusText(): string {
+    const toolNames = this.getMCPToolNamesText();
+
     switch (this.message.toolStatus) {
-      case ToolCallStatus.CALLING:
-        if (this.message.webUsed) {
-          return '🔍 正在搜索网络信息...';
-        }
-        return '⚙️ 正在调用工具...';
-      case ToolCallStatus.COMPLETED:
-        if (this.message.webUsed) {
-          return '✅ 搜索完成';
-        }
-        return '✅ 工具调用完成';
-      case ToolCallStatus.FAILED:
-        return '❌ 工具调用失败';
+      case 'calling':
+        return this.getCallingStatusText() + toolNames;
+      case 'completed':
+        return this.getCompletedStatusText() + toolNames;
+      case 'failed':
+        return this.getFailedStatusText() + toolNames;
       default:
         return '';
     }
+  }
+
+  /**
+   * 获取MCP工具名称文本
+   */
+  private getMCPToolNamesText(): string {
+    if (this.message.mcpToolNames && this.message.mcpToolNames.length > 0) {
+      // 最多显示前3个工具名称，每个名称最多30字符（足够显示calculator、app_launcher等）
+      const toolsToShow = this.message.mcpToolNames.slice(0, 3).map(name => {
+        return name.length > 30 ? name.substring(0, 27) + '...' : name;
+      });
+      const hasMore = this.message.mcpToolNames.length > 3;
+      const toolNamesStr = toolsToShow.join(', ');
+      const moreText = hasMore ? ` +${this.message.mcpToolNames.length - 3}` : '';
+      return `: ${toolNamesStr}${moreText}`;
+    }
+    // 在调用状态下，如果还没有实际执行的工具，不显示工具名称
+    if (this.message.toolStatus === 'calling') {
+      return '';
+    }
+    // 向后兼容，如果没有mcpToolNames，使用原有的toolName
+    return this.message.toolName ? `: ${this.message.toolName}` : '';
+  }
+
+  /**
+   * 获取调用中状态文本
+   */
+  private getCallingStatusText(): string {
+    // 只处理MCP工具类型
+    if (this.message.toolType === 'mcp') {
+      return '🔧 正在执行MCP工具';
+    }
+    return '';
+  }
+
+  /**
+   * 获取完成状态文本
+   */
+  private getCompletedStatusText(): string {
+    // 只处理MCP工具类型（图标已经显示✅，文本不需要重复显示）
+    if (this.message.toolType === 'mcp') {
+      return 'MCP';
+    }
+    return '';
+  }
+
+  /**
+   * 获取失败状态文本
+   */
+  private getFailedStatusText(): string {
+    // 只处理MCP工具类型（图标已经显示❌，文本不需要重复显示）
+    if (this.message.toolType === 'mcp') {
+      return 'MCP';
+    }
+    return '';
   }
 
   /**
@@ -51,11 +92,11 @@ export struct ToolCallStatusComponent {
    */
   private getToolStatusIcon(): string {
     switch (this.message.toolStatus) {
-      case ToolCallStatus.CALLING:
-        return this.message.webUsed ? '🔍' : '⚙️';
-      case ToolCallStatus.COMPLETED:
+      case 'calling':
+        return this.getCallingIcon();
+      case 'completed':
         return '✅';
-      case ToolCallStatus.FAILED:
+      case 'failed':
         return '❌';
       default:
         return '';
@@ -63,15 +104,26 @@ export struct ToolCallStatusComponent {
   }
 
   /**
+   * 获取调用中状态图标
+   */
+  private getCallingIcon(): string {
+    // 只处理MCP工具类型
+    if (this.message.toolType === 'mcp') {
+      return '🔧';
+    }
+    return '';
+  }
+
+  /**
    * 获取工具调用状态颜色
    */
   private getToolStatusColor(): ResourceStr {
     switch (this.message.toolStatus) {
-      case ToolCallStatus.CALLING:
+      case 'calling':
         return $r('app.color.primary_color');
-      case ToolCallStatus.COMPLETED:
+      case 'completed':
         return '#4CAF50'; // 绿色
-      case ToolCallStatus.FAILED:
+      case 'failed':
         return $r('app.color.error_color');
       default:
         return $r('app.color.text_secondary');
@@ -82,7 +134,7 @@ export struct ToolCallStatusComponent {
    * 是否应该显示动画
    */
   private shouldShowAnimation(): boolean {
-    return this.message.toolStatus === ToolCallStatus.CALLING;
+    return this.message.toolStatus === 'calling';
   }
 
   /**
@@ -90,53 +142,40 @@ export struct ToolCallStatusComponent {
    */
   @Builder
   buildToolStatusCard() {
-    // 显示工具调用状态或网络搜索信息
-    if (this.shouldShowToolStatus() || this.shouldShowSearchInfo()) {
+    // 只显示MCP工具调用状态
+    if (this.shouldShowToolStatus()) {
       Column({ space: 4 }) {
-        // 工具调用状态行
-        if (this.shouldShowToolStatus()) {
-          Row({ space: 8 }) {
-            // 状态图标
-            Text(this.getToolStatusIcon())
-              .fontSize(14)
-              .animation({
-                duration: this.shouldShowAnimation() ? 1000 : 0,
-                curve: Curve.EaseInOut,
-                iterations: this.shouldShowAnimation() ? -1 : 1,
-                playMode: PlayMode.Alternate
-              })
-              .scale({
-                x: this.shouldShowAnimation() ? 1.2 : 1.0,
-                y: this.shouldShowAnimation() ? 1.2 : 1.0
-              })
+        // MCP工具调用状态行
+        Row({ space: 8 }) {
+          // 状态图标
+          Text(this.getToolStatusIcon())
+            .fontSize(14)
+            .animation({
+              duration: this.shouldShowAnimation() ? 1000 : 0,
+              curve: Curve.EaseInOut,
+              iterations: this.shouldShowAnimation() ? -1 : 1,
+              playMode: PlayMode.Alternate
+            })
+            .scale({
+              x: this.shouldShowAnimation() ? 1.2 : 1.0,
+              y: this.shouldShowAnimation() ? 1.2 : 1.0
+            })
 
-            // 状态文本
-            Text(this.getToolStatusText())
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(this.getToolStatusColor())
-              .opacity(this.shouldShowAnimation() ? 0.8 : 1.0)
-              .animation({
-                duration: this.shouldShowAnimation() ? 1500 : 0,
-                curve: Curve.EaseInOut,
-                iterations: this.shouldShowAnimation() ? -1 : 1,
-                playMode: PlayMode.Alternate
-              })
-          }
-        }
-
-        // 搜索信息行（在完成状态时显示）
-        if (this.shouldShowSearchInfo()) {
-          Row({ space: 6 }) {
-            Text('🔍')
-              .fontSize(12)
-            Text(this.truncateSearchInfo(this.message.searchInfo || ''))
-              .fontSize(11)
-              .fontColor($r('app.color.text_secondary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-          }
+          // 状态文本
+          Text(this.getToolStatusText())
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.getToolStatusColor())
+            .opacity(this.shouldShowAnimation() ? 0.8 : 1.0)
+            .animation({
+              duration: this.shouldShowAnimation() ? 1500 : 0,
+              curve: Curve.EaseInOut,
+              iterations: this.shouldShowAnimation() ? -1 : 1,
+              playMode: PlayMode.Alternate
+            })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
         }
       }
       .padding({ top: 6, bottom: 6, left: 12, right: 12 })
@@ -150,6 +189,12 @@ export struct ToolCallStatusComponent {
       .onClick(() => {
         this.handleToolStatusClick();
       })
+      .gesture(
+        TapGesture({ count: 1 })
+          .onAction(() => {
+            this.handleToolStatusClick();
+          })
+      )
     } else {
       Blank()
         .width(0)
@@ -161,37 +206,23 @@ export struct ToolCallStatusComponent {
    * 是否应该显示工具调用状态
    */
   private shouldShowToolStatus(): boolean {
-    return !!(this.message.toolStatus && this.message.toolStatus !== ToolCallStatus.IDLE);
+    // 只显示MCP工具调用状态，排除网络搜索和其他工具类型
+    return !!(this.message.toolStatus &&
+              this.message.toolStatus !== 'idle' &&
+              this.message.toolType === 'mcp');
   }
 
-  /**
-   * 是否应该显示搜索信息
-   */
-  private shouldShowSearchInfo(): boolean {
-    return !!(this.message.webUsed && this.message.searchInfo &&
-      this.message.toolStatus === ToolCallStatus.COMPLETED);
-  }
-
-  /**
-   * 截断搜索信息以适合显示
-   */
-  private truncateSearchInfo(searchInfo: string): string {
-    if (!searchInfo) return '';
-    const maxLength = 60;
-    return searchInfo.length > maxLength ?
-      searchInfo.substring(0, maxLength) + '...' : searchInfo;
-  }
 
   /**
    * 获取工具调用状态背景色
    */
   private getToolStatusBackgroundColor(): ResourceStr {
     switch (this.message.toolStatus) {
-      case ToolCallStatus.CALLING:
+      case 'calling':
         return 'rgba(33, 150, 243, 0.1)'; // 蓝色背景
-      case ToolCallStatus.COMPLETED:
+      case 'completed':
         return 'rgba(76, 175, 80, 0.1)'; // 绿色背景
-      case ToolCallStatus.FAILED:
+      case 'failed':
         return 'rgba(244, 67, 54, 0.1)'; // 红色背景
       default:
         return $r('app.color.card_background');
@@ -202,18 +233,14 @@ export struct ToolCallStatusComponent {
    * 处理工具状态点击事件
    */
   private handleToolStatusClick(): void {
-    Logger.info('ToolCallStatusComponent', `工具状态被点击: ${this.message.toolStatus}`);
+    if (this.message.mcpToolNames && this.message.mcpToolNames.length > 0) {
+      const toolsList = this.message.mcpToolNames.join(', ');
+      Logger.info('ToolCallStatusComponent', `MCP工具状态被点击: ${this.message.toolStatus}, 工具列表: ${toolsList}`);
 
-    // 如果是网络搜索相关，显示搜索详情
-    if (this.message.webUsed && (this.message.searchDetails || this.message.searchInfo)) {
-      Logger.info('ToolCallStatusComponent', '显示搜索详情');
-
-      // 优先使用详细信息，否则使用简化信息
-      const detailsToShow = this.message.searchDetails || this.message.searchInfo || '';
-
-      if (detailsToShow && this.onSearchDetailsClick) {
-        this.onSearchDetailsClick(detailsToShow);
-      }
+      // 可以在未来添加详细信息显示，比如弹出对话框显示所有工具名称和执行结果
+      // 目前仅记录日志以供调试
+    } else {
+      Logger.info('ToolCallStatusComponent', `MCP工具状态被点击: ${this.message.toolStatus}`);
     }
   }
 
