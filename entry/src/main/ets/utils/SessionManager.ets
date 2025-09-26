@@ -156,6 +156,119 @@ export class SessionManager {
   }
 
   /**
+   * 创建角色会话 - 专门为角色优化的会话创建
+   */
+  async createRoleSession(role: SystemPrompt, firstMessage?: string): Promise<Session> {
+    try {
+      Logger.info('SessionManager', `创建角色会话: ${role.name}`);
+
+      const existingSessions = await this.getSessions();
+      if (existingSessions.length >= this.MAX_SESSIONS) {
+        Logger.warn('SessionManager', `会话数量已达上限 ${this.MAX_SESSIONS}`);
+        throw new Error(`会话数量已达上限 ${this.MAX_SESSIONS} 个`);
+      }
+
+      // 使用角色信息生成会话名
+      let sessionName: string;
+      if (firstMessage && firstMessage.trim()) {
+        // 如果有首条消息，使用角色名+消息内容生成会话名
+        const messagePreview = firstMessage.trim().length <= 10
+          ? firstMessage.trim()
+          : firstMessage.trim().substring(0, 10) + '...';
+        sessionName = `[${role.name.split(' ')[0]}] ${messagePreview}`;
+      } else {
+        // 如果没有首条消息，使用角色名生成会话名
+        sessionName = `与"${role.name}"的对话`;
+      }
+
+      // 创建新会话并绑定角色ID
+      const session = new Session(sessionName, role.id);
+      Logger.info('SessionManager', `创建角色会话: ${session.id} - ${session.name}, 角色ID: ${role.id}`);
+
+      // 保存会话
+      await AppStorage.saveSession(session);
+
+      // 设置为当前会话
+      await this.setCurrentSession(session.id);
+
+      Logger.info('SessionManager', `角色会话创建成功: ${session.id}`);
+      return session;
+
+    } catch (error) {
+      Logger.error('SessionManager', `创建角色会话失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 获取会话绑定的角色信息
+   */
+  async getSessionRole(sessionId: string): Promise<SystemPrompt | null> {
+    try {
+      const session = (await this.getSessions()).find(s => s.id === sessionId);
+      if (!session || !session.systemPromptId) {
+        return null;
+      }
+
+      // 获取所有系统提示词
+      const prompts = await AppStorage.getSystemPrompts();
+      const role = prompts.find(p => p.id === session.systemPromptId && p.isRole);
+
+      if (role) {
+        Logger.debug('SessionManager', `获取会话角色: ${sessionId} -> ${role.name}`);
+        return role;
+      }
+
+      return null;
+    } catch (error) {
+      Logger.error('SessionManager', `获取会话角色失败: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * 切换会话的角色
+   */
+  async switchSessionRole(sessionId: string, newRoleId: string | null): Promise<void> {
+    try {
+      Logger.info('SessionManager', `切换会话角色: ${sessionId} -> ${newRoleId || '无'}`);
+
+      // 验证新角色是否存在
+      if (newRoleId) {
+        const prompts = await AppStorage.getSystemPrompts();
+        const role = prompts.find(p => p.id === newRoleId && p.isRole);
+        if (!role) {
+          throw new Error('指定的角色不存在');
+        }
+      }
+
+      // 更新会话的系统提示词
+      await this.updateSessionPrompt(sessionId, newRoleId);
+
+      Logger.info('SessionManager', `会话角色切换成功: ${sessionId}`);
+    } catch (error) {
+      Logger.error('SessionManager', `切换会话角色失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 获取所有使用特定角色的会话
+   */
+  async getSessionsByRole(roleId: string): Promise<Session[]> {
+    try {
+      const sessions = await this.getSessions();
+      const roleSessions = sessions.filter(s => s.systemPromptId === roleId);
+
+      Logger.debug('SessionManager', `获取角色 ${roleId} 的会话: ${roleSessions.length} 个`);
+      return roleSessions;
+    } catch (error) {
+      Logger.error('SessionManager', `获取角色会话列表失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
    * 删除会话
    */
   async deleteSession(sessionId: string): Promise<void> {

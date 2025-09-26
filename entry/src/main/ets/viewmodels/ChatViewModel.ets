@@ -1113,6 +1113,13 @@ export class ChatViewModel {
   }
 
   /**
+   * 获取会话管理器实例
+   */
+  getSessionManager(): SessionManager {
+    return this.sessionManager;
+  }
+
+  /**
    * 获取当前会话的系统提示词
    */
   getCurrentSessionSystemPrompt(): SystemPrompt | null {

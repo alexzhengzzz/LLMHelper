@@ -10,6 +10,7 @@ import { Session, SystemPrompt } from '../models/ChatModels';
 import { ChatViewModel } from '../viewmodels/ChatViewModel';
 import { SwipeableSessionItemComponent } from './SwipeableSessionItemComponent';
 import { NewSessionDialogComponent } from './NewSessionDialogComponent';
+import { RoleViewComponent } from './RoleViewComponent';
 import { AppConfigManager } from '../utils/AppConfigManager';
 
 interface AvatarOption {
@@ -57,6 +58,7 @@ export struct SideDrawerComponent {
   @Local showNewSessionDialog: boolean = false; // 新增：新建会话对话框状态
   @Local isSessionItemSwiping: boolean = false; // 会话项正在滑动状态
   @Local isExiting: boolean = false; // 是否正在执行退出动画
+  @Local activeTab: 'sessions' | 'roles' = 'sessions'; // 活跃标签页：会话或角色
   
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private userProfileManager: UserProfileManager = UserProfileManager.getInstance();
@@ -262,8 +264,8 @@ export struct SideDrawerComponent {
           // 头部
           this.buildHeader()
 
-          // 会话列表 - 从头部下方开始，占据剩余空间
-          this.buildSessionSection()
+          // 主内容区域 - 会话列表或角色列表
+          this.buildMainContentSection()
         }
         .width(280)
         .height('100%')
@@ -499,22 +501,75 @@ export struct SideDrawerComponent {
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
   }
 
-  //=================== 会话管理相关Builder ===================
+  //=================== 会话和角色管理相关Builder ===================
+
+  @Builder
+  buildMainContentSection() {
+    Column() {
+      // 标签页切换
+      Row() {
+        // 会话标签
+        Button() {
+          Text('会话')
+            .fontSize(14)
+            .fontWeight(this.activeTab === 'sessions' ? FontWeight.Medium : FontWeight.Normal)
+            .fontColor(this.activeTab === 'sessions' ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
+        }
+        .type(ButtonType.Normal)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.activeTab = 'sessions';
+        })
+        .layoutWeight(1)
+        .height(40)
+        .borderRadius(0)
+        .border({ width: { bottom: 2 }, color: this.activeTab === 'sessions' ? $r('app.color.text_primary') : Color.Transparent })
+
+        // 角色标签
+        Button() {
+          Text('角色')
+            .fontSize(14)
+            .fontWeight(this.activeTab === 'roles' ? FontWeight.Medium : FontWeight.Normal)
+            .fontColor(this.activeTab === 'roles' ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
+        }
+        .type(ButtonType.Normal)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.activeTab = 'roles';
+        })
+        .layoutWeight(1)
+        .height(40)
+        .borderRadius(0)
+        .border({ width: { bottom: 2 }, color: this.activeTab === 'roles' ? $r('app.color.text_primary') : Color.Transparent })
+      }
+      .width('100%')
+      .margin({ top: 16, left: 16, right: 16 })
+
+      // 内容区域
+      if (this.activeTab === 'sessions') {
+        this.buildSessionSection()
+      } else {
+        this.buildRoleSection()
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
+  }
 
   @Builder
   buildSessionSection() {
     Scroll() {
       Column() {
-        // 会话区域标题
+        // 会话列表头部
         Row() {
-          Text('会话')
+          Text('会话列表')
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_secondary'))
             .margin({ left: 24 })
-          
+
           Blank()
-          
+
           // 新建会话按钮
           Button({ type: ButtonType.Circle, stateEffect: true }) {
             Text('+')
@@ -533,7 +588,7 @@ export struct SideDrawerComponent {
         .width('100%')
         .height(40)
         .alignItems(VerticalAlign.Center)
-        .margin({ top: 16 })
+        .margin({ top: 8 })
 
         // 会话列表
         Column() {
@@ -576,12 +631,20 @@ export struct SideDrawerComponent {
       }
       .width('100%')
     }
-    // .border({color: Color.Orange, width: 1})
     .width('100%')
     .layoutWeight(1)
     .align(Alignment.TopStart)
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
+  }
+
+  @Builder
+  buildRoleSection() {
+    RoleViewComponent({
+      onRoleSelect: (role: SystemPrompt) => {
+        this.handleRoleSelect(role);
+      }
+    })
   }
 
 
@@ -649,7 +712,7 @@ export struct SideDrawerComponent {
     })
   }
 
-  //=================== 会话管理相关方法 ===================
+  //=================== 会话和角色管理相关方法 ===================
 
   /**
    * 判断是否为当前会话
@@ -840,6 +903,37 @@ export struct SideDrawerComponent {
     }
   }
 
+  /**
+   * 处理角色选择
+   */
+  private async handleRoleSelect(role: SystemPrompt): Promise<void> {
+    try {
+      Logger.info('SideDrawerComponent', `选择角色: ${role.name}`);
+
+      if (!this.chatViewModel) {
+        Logger.warn('SideDrawerComponent', '没有ChatViewModel，无法处理角色选择');
+        return;
+      }
+
+      // 使用SessionManager创建基于角色的会话
+      const sessionManager = this.chatViewModel.getSessionManager();
+      const newSession = await sessionManager.createRoleSession(role);
+
+      if (newSession) {
+        Logger.info('SideDrawerComponent', `基于角色创建会话成功: ${newSession.name}`);
+
+        // 关闭侧边栏
+        this.closeDrawer();
+
+        // 通知父组件会话已切换
+        this.onSessionSwitched?.();
+      }
+    } catch (error) {
+      Logger.error('SideDrawerComponent', `处理角色选择失败: ${error}`);
+    }
+  }
+
+  
   private navigateToSettings(): void {
     this.closeDrawer();
     setTimeout(() => {

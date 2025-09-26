@@ -13,7 +13,9 @@ import { DeepThinkingDialog } from '../components/DeepThinkingDialog';
 import { SearchDetailsDialog } from '../components/SearchDetailsDialog';
 import { DeepThinkingStatusCard } from '../components/DeepThinkingStatusCard';
 import { ToolCallStatusComponent } from '../components/ToolCallStatusComponent';
+import { RoleCardComponent } from '../components/RoleCardComponent';
 import { ToolType } from '../types/ToolboxTypes';
+import { Position } from '../types/APITypes';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { ThemeManager } from '../utils/ThemeManager';
 import { FontManager } from '../utils/FontManager';
@@ -23,6 +25,7 @@ import { UserProfileManager } from '../utils/UserProfileManager';
 import { AppConfigManager } from '../utils/AppConfigManager';
 import { AutoTTSService } from '../services/AutoTTSService';
 import { Logger } from '../utils/Logger';
+import { SessionManager } from '../utils/SessionManager';
 import { Constants } from '../utils/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
 
@@ -57,13 +60,6 @@ interface NavigationIconOptions {
   inactiveBorderColor?: Resource | string;
 }
 
-/**
- * 位置坐标接口
- */
-interface Position {
-  x: number;
-  y: number;
-}
 
 /**
  * 聊天主页面 - 使用状态管理V2和MVVM模式
@@ -89,6 +85,11 @@ struct ChatPage {
   @Local showSideDrawer: boolean = false;
   @Local enableWebSearch: boolean = false; // 联网搜索开关状态
   @Local enableDeepThinking: boolean = false; // 深度思考开关状态
+
+  // 角色相关状态
+  @Local currentSessionRole: SystemPrompt | null = null; // 当前会话的角色
+  @Local showRoleCard: boolean = false; // 是否显示角色卡片
+  @Local roleCardPosition: Position = { x: 0, y: 0 }; // 角色卡片位置
   @Local enableMCPTools: boolean = true; // MCP工具开关状态
   @Local showToolboxPanel: boolean = false; // 工具箱面板显示状态
   @Local toolboxPanelOpacity: number = 0.0; // 工具箱面板透明度
@@ -377,6 +378,9 @@ struct ChatPage {
 
     // 启动消息变化检测定时器
     this.startMessageChangeTimer();
+
+    // 加载当前会话的角色信息
+    await this.loadCurrentSessionRole();
   }
 
   async onPageShow(): Promise<void> {
@@ -666,9 +670,11 @@ struct ChatPage {
               this.sideDrawerSwipeProgress = 0;
             });
           },
-          onSessionSwitched: () => {
+          onSessionSwitched: async () => {
             // 会话切换成功后滚动到最新消息
             this.scrollToBottom();
+            // 重新加载当前会话的角色信息
+            await this.loadCurrentSessionRole();
           },
           chatViewModel: this.chatViewModel,
           sessions: this.chatViewModel.sessions, // 单独传递sessions数组确保响应式更新
@@ -3080,4 +3086,93 @@ struct ChatPage {
     this.forceReloadProviders = true;
   }
 
+  // ==================== 角色相关方法 ====================
+
+  /**
+   * 加载当前会话的角色信息
+   */
+  private async loadCurrentSessionRole(): Promise<void> {
+    try {
+      const sessionManager = SessionManager.getInstance();
+      const currentSessionId = await sessionManager.getCurrentSessionId();
+
+      if (currentSessionId) {
+        const role = await sessionManager.getSessionRole(currentSessionId);
+        this.currentSessionRole = role;
+        Logger.info('ChatPage', `加载会话角色: ${currentSessionId} -> ${role?.name || '无角色'}`);
+      } else {
+        this.currentSessionRole = null;
+        Logger.debug('ChatPage', '当前无会话，清空角色信息');
+      }
+    } catch (error) {
+      Logger.error('ChatPage', `加载当前会话角色失败: ${error}`);
+      this.currentSessionRole = null;
+    }
+  }
+
+  /**
+   * 切换会话角色
+   */
+  private async switchSessionRole(roleId: string | null): Promise<void> {
+    try {
+      const sessionManager = SessionManager.getInstance();
+      const currentSessionId = await sessionManager.getCurrentSessionId();
+
+      if (!currentSessionId) {
+        Logger.warn('ChatPage', '无当前会话，无法切换角色');
+        return;
+      }
+
+      await sessionManager.switchSessionRole(currentSessionId, roleId);
+      await this.loadCurrentSessionRole(); // 重新加载角色信息
+
+      Logger.info('ChatPage', `会话角色切换成功: ${currentSessionId} -> ${roleId || '无角色'}`);
+    } catch (error) {
+      Logger.error('ChatPage', `切换会话角色失败: ${error}`);
+    }
+  }
+
+  /**
+   * 显示角色卡片
+   */
+  private showRoleCardAt(x: number, y: number): void {
+    this.roleCardPosition = { x, y } as Position;
+    this.showRoleCard = true;
+    Logger.debug('ChatPage', `显示角色卡片，位置: (${x}, ${y})`);
+  }
+
+  /**
+   * 隐藏角色卡片
+   */
+  private hideRoleCard(): void {
+    this.showRoleCard = false;
+    Logger.debug('ChatPage', '隐藏角色卡片');
+  }
+
+  /**
+   * 处理角色选择
+   */
+  private async handleRoleSelect(role: SystemPrompt): Promise<void> {
+    try {
+      Logger.info('ChatPage', `选择角色: ${role.name}`);
+
+      // 如果当前有会话，切换角色
+      const sessionManager = SessionManager.getInstance();
+      const currentSessionId = await sessionManager.getCurrentSessionId();
+
+      if (currentSessionId) {
+        await this.switchSessionRole(role.id);
+      } else {
+        // 如果没有会话，创建新的角色会话
+        await sessionManager.createRoleSession(role);
+        await this.loadCurrentSessionRole();
+      }
+
+      this.hideRoleCard();
+    } catch (error) {
+      Logger.error('ChatPage', `处理角色选择失败: ${error}`);
+    }
+  }
+
+  
 }

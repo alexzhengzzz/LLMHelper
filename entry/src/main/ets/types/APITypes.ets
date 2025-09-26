@@ -3,6 +3,12 @@
  * 严格遵循ArkTS类型系统要求
  */
 
+// 位置坐标接口
+export interface Position {
+  x: number;
+  y: number;
+}
+
 // API调用模式枚举
 export enum APIMode {
   SERVER_PROXY = 'server_proxy',
