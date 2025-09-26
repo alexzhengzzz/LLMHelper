@@ -181,6 +181,13 @@ export interface SystemPromptData {
   name: string;
   content: string;
   timestamp: number;
+  isRole: boolean;
+  roleCategory: string;
+  roleIcon: string;
+  roleDescription: string;
+  isBuiltIn: boolean;
+  usageCount: number;
+  isPinned: boolean;
 }
 
 // 系统提示词模型
@@ -190,12 +197,26 @@ export class SystemPrompt {
   @Trace name: string = '';
   @Trace content: string = '';
   @Trace timestamp: number = 0;
+  @Trace isRole: boolean = false;        // 是否为角色
+  @Trace roleCategory: string = '';       // 角色分类：'professional', 'creative', 'life', 'psychology', 'custom'
+  @Trace roleIcon: string = '';           // 角色图标
+  @Trace roleDescription: string = '';    // 角色描述
+  @Trace isBuiltIn: boolean = false;       // 是否为内置角色（不可删除）
+  @Trace usageCount: number = 0;           // 使用次数统计
+  @Trace isPinned: boolean = false;        // 是否置顶
 
-  constructor(name: string = '', content: string = '', id?: string) {
+  constructor(name: string = '', content: string = '', id?: string, isRole: boolean = false, roleCategory: string = '', roleIcon: string = '', roleDescription: string = '', isBuiltIn: boolean = false) {
     this.id = id || this.generateId();
     this.name = name;
     this.content = content;
     this.timestamp = Date.now();
+    this.isRole = isRole;
+    this.roleCategory = roleCategory;
+    this.roleIcon = roleIcon;
+    this.roleDescription = roleDescription;
+    this.isBuiltIn = isBuiltIn;
+    this.usageCount = 0;
+    this.isPinned = false;
   }
 
   private generateId(): string {
@@ -209,6 +230,13 @@ export class SystemPrompt {
     prompt.name = obj.name || '';
     prompt.content = obj.content || '';
     prompt.timestamp = obj.timestamp || Date.now();
+    prompt.isRole = obj.isRole || false;
+    prompt.roleCategory = obj.roleCategory || '';
+    prompt.roleIcon = obj.roleIcon || '';
+    prompt.roleDescription = obj.roleDescription || '';
+    prompt.isBuiltIn = obj.isBuiltIn || false;
+    prompt.usageCount = obj.usageCount || 0;
+    prompt.isPinned = obj.isPinned || false;
     return prompt;
   }
 
@@ -218,7 +246,14 @@ export class SystemPrompt {
       id: this.id,
       name: this.name,
       content: this.content,
-      timestamp: this.timestamp
+      timestamp: this.timestamp,
+      isRole: this.isRole,
+      roleCategory: this.roleCategory,
+      roleIcon: this.roleIcon,
+      roleDescription: this.roleDescription,
+      isBuiltIn: this.isBuiltIn,
+      usageCount: this.usageCount,
+      isPinned: this.isPinned
     };
   }
 }
