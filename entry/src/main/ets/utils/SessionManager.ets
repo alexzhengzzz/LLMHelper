@@ -8,6 +8,15 @@ interface SessionStats {
   currentSessionId: string | null;
 }
 
+interface SessionDataQuality {
+  totalSessions: number;
+  totalMessages: number;
+  validMessages: number;
+  invalidMessages: number;
+  emptyContentMessages: number;
+  sessionsWithIssues: string[];
+}
+
 /**
  * 会话管理器 - 负责会话的创建、删除、切换等操作
  */
@@ -614,19 +623,21 @@ export class SessionManager {
       }
 
       const matchedSessions: Session[] = [];
+      let totalMessagesChecked = 0;
+      let validMessagesFound = 0;
+      let invalidMessagesFound = 0;
 
       // 遍历每个会话进行检查
       for (let i = 0; i < allSessions.length; i++) {
         const session = allSessions[i];
-        Logger.info('SessionManager', `检查会话 ${i + 1}/${allSessions.length}: ${session.name} (ID: ${session.id})`);
+        Logger.debug('SessionManager', `检查会话 ${i + 1}/${allSessions.length}: ${session.name} (ID: ${session.id})`);
 
         // 1. 检查会话标题
         const sessionNameLower = session.name.toLowerCase();
         const titleMatch = sessionNameLower.includes(lowerCaseQuery);
-        Logger.info('SessionManager', `会话标题 "${session.name}" 是否包含 "${lowerCaseQuery}": ${titleMatch}`);
 
         if (titleMatch) {
-          Logger.info('SessionManager', `会话标题匹配: ${session.name}`);
+          Logger.info('SessionManager', `✅ 会话标题匹配: "${session.name}"`);
           matchedSessions.push(session);
           continue; // 匹配到标题，无需检查消息内容
         }
@@ -634,32 +645,55 @@ export class SessionManager {
         // 2. 检查会话内的消息内容
         try {
           const messages = await this.getSessionMessages(session.id);
-          Logger.info('SessionManager', `会话 ${session.id} 有 ${messages.length} 条消息`);
+          Logger.debug('SessionManager', `会话 ${session.id} 有 ${messages.length} 条消息`);
+          totalMessagesChecked += messages.length;
 
           let messageMatchFound = false;
-          for (let j = 0; j < messages.length; j++) {
+          let sessionValidMessages = 0;
+          let sessionInvalidMessages = 0;
+
+          for (let j = 0; j < messages.length && !messageMatchFound; j++) {
             const message = messages[j];
-            Logger.info('SessionManager', `检查消息 ${j + 1}/${messages.length}: content=${message.content ? message.content.substring(0, 30) + '...' : 'null'}`);
 
-            // 检查消息内容是否存在且有效
-            if (message.content && typeof message.content === 'string' && message.content.trim()) {
-              const messageContentLower = message.content.toLowerCase();
-              const contentMatch = messageContentLower.includes(lowerCaseQuery);
-              Logger.info('SessionManager', `消息内容是否包含 "${lowerCaseQuery}": ${contentMatch}`);
+            // 验证消息数据完整性
+            if (!message.content) {
+              sessionInvalidMessages++;
+              invalidMessagesFound++;
+              Logger.warn('SessionManager', `会话 ${session.id} 消息 ${j} content为空: ${message.id}`);
+              continue;
+            }
 
-              if (contentMatch) {
-                Logger.info('SessionManager', `消息内容匹配，会话: ${session.name}`);
-                matchedSessions.push(session);
-                messageMatchFound = true;
-                break; // 找到匹配的消息即可，继续检查下一个会话
-              }
-            } else {
-              Logger.info('SessionManager', `跳过无效消息: content=${message.content}`);
+            if (typeof message.content !== 'string') {
+              sessionInvalidMessages++;
+              invalidMessagesFound++;
+              Logger.warn('SessionManager', `会话 ${session.id} 消息 ${j} content类型错误: ${typeof message.content}`);
+              continue;
+            }
+
+            const trimmedContent = message.content.trim();
+            if (!trimmedContent) {
+              sessionInvalidMessages++;
+              invalidMessagesFound++;
+              Logger.debug('SessionManager', `会话 ${session.id} 消息 ${j} content为空字符串`);
+              continue;
+            }
+
+            sessionValidMessages++;
+            validMessagesFound++;
+
+            // 执行内容搜索
+            const messageContentLower = trimmedContent.toLowerCase();
+            const contentMatch = messageContentLower.includes(lowerCaseQuery);
+
+            if (contentMatch) {
+              Logger.info('SessionManager', `✅ 消息内容匹配: 会话="${session.name}", 消息="${trimmedContent.substring(0, 50)}..."`);
+              matchedSessions.push(session);
+              messageMatchFound = true;
             }
           }
 
-          if (!messageMatchFound) {
-            Logger.info('SessionManager', `会话 ${session.name} 的消息中未找到匹配内容`);
+          if (sessionInvalidMessages > 0) {
+            Logger.warn('SessionManager', `会话 ${session.id} 有 ${sessionInvalidMessages} 条无效消息，${sessionValidMessages} 条有效消息`);
           }
 
         } catch (error) {
@@ -667,12 +701,149 @@ export class SessionManager {
         }
       }
 
-      Logger.info('SessionManager', `搜索完成，找到 ${matchedSessions.length} 个匹配会话`);
+      // 输出搜索统计信息
+      Logger.info('SessionManager', `📊 搜索统计:`);
+      Logger.info('SessionManager', `  - 搜索关键词: "${lowerCaseQuery}"`);
+      Logger.info('SessionManager', `  - 检查会话数: ${allSessions.length}`);
+      Logger.info('SessionManager', `  - 检查消息数: ${totalMessagesChecked}`);
+      Logger.info('SessionManager', `  - 有效消息数: ${validMessagesFound}`);
+      Logger.info('SessionManager', `  - 无效消息数: ${invalidMessagesFound}`);
+      Logger.info('SessionManager', `  - 匹配会话数: ${matchedSessions.length}`);
+
+      if (invalidMessagesFound > 0) {
+        Logger.warn('SessionManager', `⚠️ 发现 ${invalidMessagesFound} 条无效消息，建议运行数据修复`);
+      }
+
+      Logger.info('SessionManager', `🎉 搜索完成，找到 ${matchedSessions.length} 个匹配会话`);
       return matchedSessions;
 
     } catch (error) {
       Logger.error('SessionManager', `搜索会话失败: ${error}`);
       return [];
+    }
+  }
+
+  /**
+   * 修复所有会话的消息数据
+   */
+  async repairAllSessionMessages(): Promise<void> {
+    try {
+      Logger.info('SessionManager', '🔧 开始修复所有会话的消息数据');
+
+      const allSessions = await this.getSessions();
+      let repairedSessionCount = 0;
+      let totalRepairedMessages = 0;
+
+      for (const session of allSessions) {
+        try {
+          Logger.debug('SessionManager', `修复会话: ${session.name} (${session.id})`);
+
+          // 获取会话消息，这个过程中会自动修复数据
+          const messages = await this.getSessionMessages(session.id);
+
+          // 检查是否有无效消息
+          let invalidCount = 0;
+          const validMessages = messages.filter(msg => {
+            if (!msg.content || typeof msg.content !== 'string') {
+              invalidCount++;
+              return false;
+            }
+            return true;
+          });
+
+          if (invalidCount > 0 || validMessages.length !== messages.length) {
+            // 重新保存有效消息
+            await this.saveSessionMessages(session.id, validMessages);
+            repairedSessionCount++;
+            totalRepairedMessages += invalidCount;
+
+            Logger.info('SessionManager', `✅ 修复会话 ${session.name}: 移除 ${invalidCount} 条无效消息`);
+          }
+
+        } catch (error) {
+          Logger.error('SessionManager', `修复会话 ${session.id} 失败: ${error}`);
+        }
+      }
+
+      Logger.info('SessionManager', `🎉 数据修复完成:`);
+      Logger.info('SessionManager', `  - 检查会话数: ${allSessions.length}`);
+      Logger.info('SessionManager', `  - 修复会话数: ${repairedSessionCount}`);
+      Logger.info('SessionManager', `  - 修复消息数: ${totalRepairedMessages}`);
+
+    } catch (error) {
+      Logger.error('SessionManager', `修复会话数据失败: ${error}`);
+      throw new Error(`修复会话数据失败: ${error}`);
+    }
+  }
+
+  /**
+   * 诊断会话数据质量
+   */
+  async diagnoseSessionDataQuality(): Promise<SessionDataQuality> {
+    try {
+      Logger.info('SessionManager', '🔍 开始诊断会话数据质量');
+
+      const allSessions = await this.getSessions();
+      let totalMessages = 0;
+      let validMessages = 0;
+      let invalidMessages = 0;
+      let emptyContentMessages = 0;
+      const sessionsWithIssues: string[] = [];
+
+      for (const session of allSessions) {
+        try {
+          const messages = await AppStorage.getSessionMessages(session.id);
+          totalMessages += messages.length;
+
+          let sessionHasIssues = false;
+
+          for (const message of messages) {
+            if (!message.content) {
+              invalidMessages++;
+              sessionHasIssues = true;
+            } else if (typeof message.content !== 'string') {
+              invalidMessages++;
+              sessionHasIssues = true;
+            } else if (!message.content.trim()) {
+              emptyContentMessages++;
+              sessionHasIssues = true;
+            } else {
+              validMessages++;
+            }
+          }
+
+          if (sessionHasIssues) {
+            sessionsWithIssues.push(`${session.name} (${session.id})`);
+          }
+
+        } catch (error) {
+          Logger.error('SessionManager', `诊断会话 ${session.id} 失败: ${error}`);
+          sessionsWithIssues.push(`${session.name} (${session.id}) - 读取失败`);
+        }
+      }
+
+      const result: SessionDataQuality = {
+        totalSessions: allSessions.length,
+        totalMessages,
+        validMessages,
+        invalidMessages,
+        emptyContentMessages,
+        sessionsWithIssues
+      };
+
+      Logger.info('SessionManager', `📊 数据质量诊断结果:`);
+      Logger.info('SessionManager', `  - 会话总数: ${result.totalSessions}`);
+      Logger.info('SessionManager', `  - 消息总数: ${result.totalMessages}`);
+      Logger.info('SessionManager', `  - 有效消息: ${result.validMessages}`);
+      Logger.info('SessionManager', `  - 无效消息: ${result.invalidMessages}`);
+      Logger.info('SessionManager', `  - 空内容消息: ${result.emptyContentMessages}`);
+      Logger.info('SessionManager', `  - 有问题的会话: ${result.sessionsWithIssues.length}`);
+
+      return result;
+
+    } catch (error) {
+      Logger.error('SessionManager', `诊断会话数据质量失败: ${error}`);
+      throw new Error(`诊断会话数据质量失败: ${error}`);
     }
   }
 

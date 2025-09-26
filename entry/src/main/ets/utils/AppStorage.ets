@@ -1,6 +1,6 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { Message, SystemPrompt, SystemPromptData, Session, SessionData } from '../models/ChatModels';
+import { Message, MessageRole, ThinkingStatus, SystemPrompt, SystemPromptData, Session, SessionData } from '../models/ChatModels';
 import { Logger } from './Logger';
 import { DefaultPrompts } from '../data/DefaultPrompts';
 
@@ -943,9 +943,96 @@ export class AppStorage {
         return [];
       }
 
-      const messages: Message[] = JSON.parse(messagesStr as string);
-      Logger.debug('AppStorage', `会话 ${sessionId} 有 ${messages.length} 条消息`);
-      return messages;
+      interface RawMessage {
+        id?: string;
+        role?: string;
+        content?: string | null | undefined;
+        timestamp?: number;
+        isPlaying?: boolean;
+        canPlayAudio?: boolean;
+        toolStatus?: string;
+        toolType?: string;
+        toolName?: string;
+        mcpToolNames?: string[];
+        webUsed?: boolean;
+        searchInfo?: string;
+        searchDetails?: string;
+        isDeepThinking?: boolean;
+        thinkingSteps?: object[];
+        thinkingStatus?: string;
+      }
+
+      const rawMessages: RawMessage[] = JSON.parse(messagesStr as string);
+      Logger.debug('AppStorage', `会话 ${sessionId} 读取到 ${rawMessages.length} 条原始消息`);
+
+      // 验证和修复消息数据
+      const validMessages: Message[] = [];
+      let repairedCount = 0;
+      let validCount = 0;
+
+      rawMessages.forEach((rawMsg: RawMessage, index: number) => {
+        try {
+          // 创建 Message 实例并确保数据完整性
+          let content: string = rawMsg.content as string;
+
+          // 修复空的或无效的content
+          if (content === null || content === undefined) {
+            content = '';
+            repairedCount++;
+            Logger.warn('AppStorage', `修复消息 ${index} 的空content: ${rawMsg.id}`);
+          }
+
+          // 确保content是字符串类型
+          if (typeof content !== 'string') {
+            content = String(content);
+            repairedCount++;
+            Logger.warn('AppStorage', `修复消息 ${index} 的content类型: ${typeof rawMsg.content} -> string`);
+          }
+
+          // 创建完整的消息对象
+          const messageRole = (rawMsg.role === 'user' || rawMsg.role === 'assistant' || rawMsg.role === 'system')
+            ? rawMsg.role as MessageRole
+            : MessageRole.USER;
+
+          const message = new Message(
+            messageRole,
+            content,
+            rawMsg.id
+          );
+
+          // 恢复其他属性
+          message.timestamp = rawMsg.timestamp || Date.now();
+          message.isLoading = false; // 已保存的消息不应处于加载状态
+          message.isPlaying = rawMsg.isPlaying || false;
+          message.canPlayAudio = rawMsg.canPlayAudio || (rawMsg.role === 'assistant');
+          message.toolStatus = rawMsg.toolStatus || 'idle';
+          message.toolType = rawMsg.toolType || '';
+          message.toolName = rawMsg.toolName || '';
+          message.mcpToolNames = rawMsg.mcpToolNames || [];
+          message.webUsed = rawMsg.webUsed || false;
+          message.searchInfo = rawMsg.searchInfo || '';
+          message.searchDetails = rawMsg.searchDetails || '';
+          message.isDeepThinking = rawMsg.isDeepThinking || false;
+          message.thinkingSteps = []; // 初始化为空数组，避免类型冲突
+          message.thinkingStatus = ThinkingStatus.IDLE; // 使用枚举值
+
+          validMessages.push(message);
+          validCount++;
+
+        } catch (msgError) {
+          Logger.error('AppStorage', `跳过无效消息 ${index}: ${msgError}`);
+        }
+      });
+
+      Logger.info('AppStorage', `消息读取完成 - 有效消息: ${validCount}, 修复消息: ${repairedCount}`);
+
+      // 如果有修复的消息，重新保存以确保数据一致性
+      if (repairedCount > 0) {
+        Logger.info('AppStorage', `检测到 ${repairedCount} 条消息需要修复，重新保存会话数据`);
+        await AppStorage.saveSessionMessages(sessionId, validMessages);
+      }
+
+      return validMessages;
     } catch (e) {
       Logger.error('AppStorage', `Failed to get session messages: ${e}`);
       return [];
@@ -960,11 +1047,80 @@ export class AppStorage {
       Logger.debug('AppStorage', `保存会话消息: ${sessionId}, 数量: ${messages.length}`);
       const storage = AppStorage.getStorage();
       const messageKey = `session_${sessionId}_messages`;
-      const jsonStr = JSON.stringify(messages.filter(msg => !msg.isLoading));
-      
+
+      interface StorableMessage {
+        id: string;
+        role: string;
+        content: string;
+        timestamp: number;
+        isLoading: boolean;
+        isPlaying: boolean;
+        canPlayAudio: boolean;
+        toolStatus: string;
+        toolType: string;
+        toolName: string;
+        mcpToolNames: string[];
+        webUsed: boolean;
+        searchInfo: string;
+        searchDetails: string;
+        isDeepThinking: boolean;
+        thinkingSteps: object[];
+        thinkingStatus: string;
+      }
+
+      // 过滤掉正在加载的消息，并确保数据完整性
+      const validMessages: StorableMessage[] = messages
+        .filter(msg => !msg.isLoading)
+        .map(msg => {
+          // 确保每个消息都有有效的content字段
+          if (!msg.content && msg.content !== '') {
+            Logger.warn('AppStorage', `消息 ${msg.id} 的content为空，设置为空字符串`);
+            msg.content = '';
+          }
+
+          // 创建一个干净的消息对象，确保所有必要字段都存在
+          const storableMessage: StorableMessage = {
+            id: msg.id || '',
+            role: msg.role || 'user',
+            content: msg.content || '',
+            timestamp: msg.timestamp || Date.now(),
+            isLoading: false,
+            isPlaying: msg.isPlaying || false,
+            canPlayAudio: msg.canPlayAudio || false,
+            toolStatus: msg.toolStatus || 'idle',
+            toolType: msg.toolType || '',
+            toolName: msg.toolName || '',
+            mcpToolNames: msg.mcpToolNames || [],
+            webUsed: msg.webUsed || false,
+            searchInfo: msg.searchInfo || '',
+            searchDetails: msg.searchDetails || '',
+            isDeepThinking: msg.isDeepThinking || false,
+            thinkingSteps: msg.thinkingSteps || [],
+            thinkingStatus: msg.thinkingStatus || 'idle'
+          };
+          return storableMessage;
+        });
+
+      // 验证消息数据完整性
+      let validCount = 0;
+      let contentNullCount = 0;
+      validMessages.forEach((msg, index) => {
+        if (msg.content && typeof msg.content === 'string') {
+          validCount++;
+        } else {
+          contentNullCount++;
+          Logger.warn('AppStorage', `消息 ${index} content无效: ${typeof msg.content}, 值: ${msg.content}`);
+        }
+      });
+
+      Logger.info('AppStorage', `消息验证结果 - 有效消息: ${validCount}, content为空的消息: ${contentNullCount}`);
+
+      const jsonStr = JSON.stringify(validMessages);
+      Logger.debug('AppStorage', `序列化JSON长度: ${jsonStr.length}`);
+
       await storage.put(messageKey, jsonStr);
       await storage.flush();
-      
+
       Logger.debug('AppStorage', `会话消息保存成功: ${sessionId}`);
     } catch (e) {
       Logger.error('AppStorage', `Failed to save session messages: ${e}`);
