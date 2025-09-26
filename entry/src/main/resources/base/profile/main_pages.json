@@ -6,6 +6,7 @@
     "pages/APIKeyManagerPage",
     "pages/UserProfileEditPage",
     "pages/ServerSettingsPage",
-    "pages/MCPSettingsPage"
+    "pages/MCPSettingsPage",
+    "pages/MemoryManagerPage"
   ]
 }

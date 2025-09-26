@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景圆 -->
+  <circle cx="60" cy="60" r="55" fill="#F0F2F5" stroke="#E1E4E8" stroke-width="2"/>
+
+  <!-- 记忆图标 -->
+  <g transform="translate(30, 30)">
+    <!-- 书本/记事本轮廓 -->
+    <rect x="10" y="15" width="40" height="50" rx="3" fill="none" stroke="#6C757D" stroke-width="2"/>
+
+    <!-- 书本/记事本装订线 -->
+    <line x1="20" y1="15" x2="20" y2="65" stroke="#6C757D" stroke-width="2"/>
+
+    <!-- 记忆线条 -->
+    <line x1="25" y1="25" x2="45" y2="25" stroke="#ADB5BD" stroke-width="1.5"/>
+    <line x1="25" y1="32" x2="40" y2="32" stroke="#ADB5BD" stroke-width="1.5"/>
+    <line x1="25" y1="39" x2="45" y2="39" stroke="#ADB5BD" stroke-width="1.5"/>
+    <line x1="25" y1="46" x2="35" y2="46" stroke="#ADB5BD" stroke-width="1.5"/>
+
+    <!-- 大脑/记忆图标 -->
+    <circle cx="30" cy="8" r="6" fill="#007DFF" opacity="0.2"/>
+    <path d="M26 6 Q30 2 34 6 Q32 8 30 10 Q28 8 26 6" fill="#007DFF" opacity="0.6"/>
+  </g>
+
+  <!-- 星星装饰 -->
+  <circle cx="25" cy="25" r="2" fill="#FFB74D" opacity="0.6"/>
+  <circle cx="95" cy="35" r="1.5" fill="#4CAF50" opacity="0.6"/>
+  <circle cx="85" cy="85" r="2" fill="#F44336" opacity="0.6"/>
+  <circle cx="15" cy="90" r="1.5" fill="#9C27B0" opacity="0.6"/>
+</svg>

@@ -15,6 +15,7 @@ import { ErrorType, ErrorCode, ErrorLevel, ErrorContext } from '../types/ErrorTy
 import { ServerConfigManager, ServerEndpoint } from '../utils/ServerConfigManager';
 import { ToolCallResult } from '../types/MCPTypes';
 import { LocalToolManager } from '../services/LocalToolManager';
+import { MemoryManager } from '../utils/MemoryManager';
 
 // 用于描述从存储中反序列化的消息对象
 interface StoredMessage {
@@ -92,6 +93,7 @@ export class ChatViewModel {
   private deepThinkingService: DeepThinkingService;
   private audioPlaybackStateManager: AudioPlaybackStateManager;
   private serverConfigManager: ServerConfigManager;
+  private memoryManager: MemoryManager;
   
   // 音频播放锁，防止并发播放
   private audioPlaybackLock: boolean = false;
@@ -116,6 +118,7 @@ export class ChatViewModel {
     this.deepThinkingService = DeepThinkingService.getInstance();
     this.audioPlaybackStateManager = new AudioPlaybackStateManager();
     this.serverConfigManager = ServerConfigManager.getInstance();
+    this.memoryManager = MemoryManager.getInstance();
     
     // 添加会话数据清除监听器
     AppStorage.addSessionDataClearedListener(() => this.onSessionDataCleared());
@@ -234,8 +237,8 @@ export class ChatViewModel {
     // 设置当前思考消息ID
     this.currentThinkingMessageId = assistantMessage.id;
     
-    // 获取当前会话绑定的系统提示词
-    const sessionPrompt = this.getCurrentSessionSystemPrompt();
+    // 获取包含记忆注入的系统提示词
+    const systemPromptWithMemory = await this.getSystemPromptWithMemory();
     const filteredMessages = this.messages
       .filter(msg => !msg.isLoading && msg.role !== MessageRole.SYSTEM)
       .map(msg => ({
@@ -245,10 +248,10 @@ export class ChatViewModel {
 
     // 添加系统提示词
     const finalMessages = [...filteredMessages];
-    if (sessionPrompt) {
+    if (systemPromptWithMemory) {
       finalMessages.unshift({
         role: 'system',
-        content: sessionPrompt.content
+        content: systemPromptWithMemory
       });
     }
 
@@ -380,7 +383,8 @@ export class ChatViewModel {
     
     if (currentMode === APIMode.DIRECT_CALL && enableWebSearch) {
       // 直连模式 + 联网搜索：使用混合聊天服务
-      const sessionPrompt = this.getCurrentSessionSystemPrompt();
+      // 获取包含记忆注入的系统提示词
+      const systemPromptWithMemory = await this.getSystemPromptWithMemory();
 
       const hybridRequest: HybridChatRequest = {
         message: content,
@@ -388,7 +392,7 @@ export class ChatViewModel {
         provider: this.getAIProviderByName(this.currentProvider),
         enableSearch: enableWebSearch,
         enableTools: true, // 启用工具调用
-        systemPrompt: sessionPrompt?.content,
+        systemPrompt: systemPromptWithMemory,
         stream: false,
         max_tokens: 1000,
         temperature: 0.7
@@ -439,12 +443,12 @@ export class ChatViewModel {
         } as SimpleMessage));
 
       const finalMessages = [...filteredMessages];
-      const sessionPrompt = this.getCurrentSessionSystemPrompt();
-      
-      if (sessionPrompt) {
+      const systemPromptWithMemory = await this.getSystemPromptWithMemory();
+
+      if (systemPromptWithMemory) {
         finalMessages.unshift({
           role: 'system',
-          content: sessionPrompt.content
+          content: systemPromptWithMemory
         });
       }
 
@@ -488,14 +492,14 @@ export class ChatViewModel {
     assistantMessage: Message
   ): Promise<void> {
     try {
-      // 获取当前会话绑定的系统提示词
-      const sessionPrompt = this.getCurrentSessionSystemPrompt();
+      // 获取包含记忆注入的系统提示词
+      const systemPromptWithMemory = await this.getSystemPromptWithMemory();
 
       // 使用APIManager的智能聊天功能
       const response = await this.apiManager.sendSmartChatRequest(
         content,
         this.currentModel,
-        sessionPrompt?.content
+        systemPromptWithMemory
       );
 
       // 更新助手消息内容
@@ -1134,6 +1138,35 @@ export class ChatViewModel {
       return null;
     }
     return this.systemPrompts.find(p => p.id === this.currentSession!.systemPromptId) || null;
+  }
+
+  /**
+   * 获取包含记忆注入的系统提示词内容
+   */
+  async getSystemPromptWithMemory(): Promise<string> {
+    try {
+      // 获取原始系统提示词
+      const originalPrompt = this.getCurrentSessionSystemPrompt();
+      let systemPromptContent = originalPrompt?.content || '';
+
+      // 生成记忆注入文本
+      const memoryInjectionText = await this.memoryManager.generateMemoryInjectionText();
+
+      // 如果有记忆需要注入，将其添加到系统提示词的最前面
+      if (memoryInjectionText) {
+        systemPromptContent = memoryInjectionText + '\n\n' + systemPromptContent;
+        Logger.info('ChatViewModel', '已注入记忆到系统提示词中');
+      } else {
+        Logger.debug('ChatViewModel', '没有激活的记忆需要注入');
+      }
+
+      return systemPromptContent;
+    } catch (error) {
+      Logger.error('ChatViewModel', `获取包含记忆的系统提示词失败: ${error}`);
+      // 出错时返回原始系统提示词
+      const originalPrompt = this.getCurrentSessionSystemPrompt();
+      return originalPrompt?.content || '';
+    }
   }
 
   /**

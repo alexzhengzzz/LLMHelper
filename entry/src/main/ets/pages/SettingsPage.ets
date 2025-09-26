@@ -13,6 +13,8 @@ import { FontSettings } from '../utils/AppStorage';
 import { BasicAnimations, AnimationConfigManager } from '../animations';
 import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { MemoryManager } from '../utils/MemoryManager';
+import { MemoryStats, MemoryCategoryCounts, MemoryImportanceCounts } from '../types/MemoryTypes';
 
 interface SettingItem {
   title: string;
@@ -95,6 +97,33 @@ struct SettingsPage {
   private serverConfigManager: ServerConfigManager = ServerConfigManager.getInstance();
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private fontManager: FontManager = FontManager.getInstance();
+  private memoryManager: MemoryManager = MemoryManager.getInstance();
+  @Local private defaultCategoryCounts: MemoryCategoryCounts = {
+    personal: 0,
+    preference: 0,
+    work: 0,
+    study: 0,
+    hobby: 0,
+    family: 0,
+    health: 0,
+    custom: 0
+  };
+
+  @Local private defaultImportanceCounts: MemoryImportanceCounts = {
+    low: 0,
+    medium: 0,
+    high: 0,
+    critical: 0
+  };
+
+  @Local memoryStats: MemoryStats = {
+    totalFragments: 0,
+    activeFragments: 0,
+    categoryCounts: this.defaultCategoryCounts,
+    importanceCounts: this.defaultImportanceCounts,
+    lastUpdated: 0,
+    totalUsageCount: 0
+  };
   private avatarListener: (settings: AvatarSettings) => void = (settings: AvatarSettings) => {
     // 更新本地状态，@Computed会自动处理后续更新
     this.aiAvatarType = settings.aiAvatarType;
@@ -137,6 +166,14 @@ struct SettingsPage {
       Logger.info('SettingsPage', `自动播报设置加载成功: ${JSON.stringify(this.autoTTSSettings)}`);
     } catch (error) {
       Logger.error('SettingsPage', `加载自动播报设置失败: ${error}`);
+    }
+
+    // 加载记忆统计信息
+    try {
+      this.memoryStats = await this.memoryManager.getMemoryStats();
+      Logger.info('SettingsPage', `记忆统计信息加载成功: 总计${this.memoryStats.totalFragments}个，激活${this.memoryStats.activeFragments}个`);
+    } catch (error) {
+      Logger.error('SettingsPage', `加载记忆统计信息失败: ${error}`);
     }
 
     // 初始化用户资料管理器
@@ -450,6 +487,16 @@ struct SettingsPage {
     ];
   }
 
+  private getMemorySettings(): SettingItem[] {
+    return [
+      {
+        title: '记忆中心',
+        subtitle: `${this.memoryStats.totalFragments}个记忆碎片，${this.memoryStats.activeFragments}个已激活`,
+        type: 'button'
+      }
+    ];
+  }
+
   private getAboutSettings(): SettingItem[] {
     const configManager = AppConfigManager.getInstance();
     const privacyConfig = configManager.getPrivacyConfig();
@@ -557,6 +604,9 @@ struct SettingsPage {
 
         // 个人资料设置
         this.buildSettingsGroup('个人资料', this.computedProfileSettingsItems, 'profile')
+
+        // 记忆管理设置
+        this.buildSettingsGroup('记忆管理', this.getMemorySettings(), 'memory')
 
         // 语音播报设置
         this.buildSettingsGroup('语音播报', this.getVoiceSettings(), 'voice')
@@ -840,6 +890,9 @@ struct SettingsPage {
       case 'MCP设置':
         this.navigateToMCPSettings();
         break;
+      case '记忆中心':
+        this.navigateToMemoryManager();
+        break;
       case '关于应用':
         this.showAbout();
         break;
@@ -896,6 +949,14 @@ struct SettingsPage {
       url: 'pages/MCPSettingsPage'
     }).catch((error: Error) => {
       Logger.error('SettingsPage', `跳转到MCP设置页面失败: ${error.message}`);
+    });
+  }
+
+  private navigateToMemoryManager(): void {
+    router.pushUrl({
+      url: 'pages/MemoryManagerPage'
+    }).catch((error: Error) => {
+      Logger.error('SettingsPage', `跳转到记忆中心页面失败: ${error.message}`);
     });
   }
 

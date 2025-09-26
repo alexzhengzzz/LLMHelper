@@ -71,6 +71,10 @@
     {
       "name": "modern_role_label",
       "value": "#A0A0A0"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#6C757D"
     }
   ]
 }

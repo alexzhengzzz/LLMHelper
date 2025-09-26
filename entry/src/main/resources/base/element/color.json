@@ -79,6 +79,10 @@
     {
       "name": "warning_color_10",
       "value": "#1AFF9800"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#ADB5BD"
     }
   ]
 }
