@@ -59,8 +59,10 @@ export struct SideDrawerComponent {
   @Local isSessionItemSwiping: boolean = false; // 会话项正在滑动状态
   @Local isExiting: boolean = false; // 是否正在执行退出动画
   @Local activeTab: 'sessions' | 'roles' = 'sessions'; // 活跃标签页：会话或角色
-  @Local searchQuery: string = ''; // 搜索关键词
+  @Local globalSearchQuery: string = ''; // 全局搜索关键词
   @Local filteredSessions: Session[] = []; // 搜索过滤后的会话列表
+  @Local selectedRoleFilter: SystemPrompt | null = null; // 选中的角色筛选器
+  @Local showRoleFilter: boolean = false; // 是否显示角色筛选器
   
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private userProfileManager: UserProfileManager = UserProfileManager.getInstance();
@@ -558,6 +560,9 @@ export struct SideDrawerComponent {
       .width('100%')
       .margin({ top: 16, left: 16, right: 16 })
 
+      // 全局搜索区域
+      this.buildGlobalSearchSection()
+
       // 内容区域
       if (this.activeTab === 'sessions') {
         this.buildSessionSection()
@@ -567,6 +572,88 @@ export struct SideDrawerComponent {
     }
     .width('100%')
     .layoutWeight(1)
+  }
+
+  @Builder
+  buildGlobalSearchSection() {
+    Column() {
+      // 全局搜索框
+      if (this.activeTab === 'sessions') {
+        Search({ placeholder: this.activeTab === 'sessions' ? '搜索会话历史...' : '搜索角色...' })
+          .width('90%')
+          .height(36)
+          .margin({ top: 8, bottom: 8 })
+          .onChange((value: string) => {
+            this.globalSearchQuery = value;
+            if (this.activeTab === 'sessions') {
+              this.performGlobalSearch();
+            }
+          })
+      }
+
+      // 角色筛选器（条件显示，仅在会话页面显示）
+      if (this.activeTab === 'sessions' && this.showRoleFilter && this.selectedRoleFilter) {
+        Row() {
+          // 角色图标
+          Text(this.selectedRoleFilter.roleIcon || '🎭')
+            .fontSize(14)
+            .margin({ right: 6 })
+
+          // 角色名称
+          Text(`${this.selectedRoleFilter.name}`)
+            .fontSize(12)
+            .fontColor($r('app.color.text_primary'))
+            .fontWeight(FontWeight.Medium)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          // 清除筛选按钮
+          Button() {
+            Text('✕')
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+          }
+          .type(ButtonType.Circle)
+          .width(20)
+          .height(20)
+          .backgroundColor('transparent')
+          .stateEffect(true)
+          .hitTestBehavior(HitTestMode.Block)
+          .onClick(() => {
+            this.clearRoleFilter();
+          })
+        }
+        .width('auto')
+        .height(32)
+        .padding({ left: 8, right: 6, top: 4, bottom: 4 })
+        .backgroundColor('#E3F2FD')
+        .borderRadius(16)
+        .margin({ top: 4, bottom: 8, left: 16, right: 16 })
+        .border({ width: 1, color: '#2196F3' })
+        .alignSelf(ItemAlign.Start)
+        .stateStyles({
+          pressed: {
+            .backgroundColor('#BBDEFB')
+            .scale({ x: 0.95, y: 0.95 })
+          },
+          normal: {
+            .backgroundColor('#E3F2FD')
+            .scale({ x: 1.0, y: 1.0 })
+          }
+        })
+        .animation({
+          duration: 120,
+          curve: Curve.EaseInOut
+        })
+        .hitTestBehavior(HitTestMode.Block)
+        .onClick(() => {
+          this.clearRoleFilter();
+        })
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
@@ -603,15 +690,6 @@ export struct SideDrawerComponent {
         .alignItems(VerticalAlign.Center)
         .margin({ top: 8 })
 
-        // 搜索框
-        Search({ placeholder: '搜索会话历史...' })
-          .width('90%')
-          .height(36)
-          .margin({ top: 8, bottom: 8 })
-          .onChange((value: string) => {
-            this.searchQuery = value;
-            this.performSearch();
-          })
 
         // 会话列表
         Column() {
@@ -639,7 +717,7 @@ export struct SideDrawerComponent {
           } else {
             // 空状态
             Column() {
-              Text(this.searchQuery.trim() ? '没有找到匹配的会话' : '暂无会话')
+              Text(this.globalSearchQuery.trim() || this.showRoleFilter ? '没有找到匹配的会话' : '暂无会话')
                 .fontSize(14)
                 .fontColor($r('app.color.text_secondary'))
                 .margin({ top: 20, bottom: 20 })
@@ -666,6 +744,9 @@ export struct SideDrawerComponent {
     RoleViewComponent({
       onRoleSelect: (role: SystemPrompt) => {
         this.handleRoleSelect(role);
+      },
+      onRoleFilterRequest: (role: SystemPrompt) => {
+        this.setRoleFilter(role);
       }
     })
   }
@@ -920,6 +1001,12 @@ export struct SideDrawerComponent {
       const success = await this.chatViewModel.deleteSession(sessionId);
       if (success) {
         Logger.info('SideDrawerComponent', `会话删除成功: ${sessionId}`);
+
+        // 立即更新过滤会话列表，从当前列表中移除已删除的会话
+        this.filteredSessions = this.filteredSessions.filter(session => session.id !== sessionId);
+
+        // 同时更新搜索结果，确保界面立即反映删除操作
+        this.updateFilteredSessions();
       }
     } catch (error) {
       Logger.error('SideDrawerComponent', `删除会话失败: ${error}`);
@@ -927,9 +1014,9 @@ export struct SideDrawerComponent {
   }
 
   /**
-   * 执行搜索过滤（带防抖功能）
+   * 执行全局搜索过滤（带防抖功能，支持角色筛选）
    */
-  private performSearch(): void {
+  private performGlobalSearch(): void {
     // 清除之前的定时器
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
@@ -938,25 +1025,73 @@ export struct SideDrawerComponent {
     // 设置新的定时器
     this.debounceTimer = setTimeout(async () => {
       try {
-        if (!this.searchQuery.trim()) {
-          // 如果搜索词为空，显示所有会话
-          this.filteredSessions = [...this.sessions];
-          Logger.debug('SideDrawerComponent', '搜索词为空，显示所有会话');
-        } else {
-          Logger.debug('SideDrawerComponent', `开始搜索，关键词: "${this.searchQuery}"`);
-          Logger.debug('SideDrawerComponent', `ChatViewModel存在: ${!!this.chatViewModel}`);
+        let searchResults: Session[] = [];
 
-          // 使用 SessionManager 的搜索方法
+        // 1. 首先根据角色筛选获取基础会话列表
+        if (this.selectedRoleFilter) {
+          Logger.debug('SideDrawerComponent', `使用角色筛选: ${this.selectedRoleFilter.name}`);
           const sessionManager = this.chatViewModel?.getSessionManager();
           if (sessionManager) {
-            Logger.debug('SideDrawerComponent', '找到SessionManager，开始深度搜索');
-            this.filteredSessions = await sessionManager.searchSessions(this.searchQuery);
-            Logger.info('SideDrawerComponent', `SessionManager搜索完成，找到 ${this.filteredSessions.length} 个匹配会话`);
+            searchResults = await sessionManager.getSessionsByRole(this.selectedRoleFilter.id);
+            Logger.debug('SideDrawerComponent', `角色筛选找到 ${searchResults.length} 个相关会话`);
+          } else {
+            searchResults = [...this.sessions];
+          }
+        } else {
+          // 没有角色筛选，使用所有会话
+          searchResults = [...this.sessions];
+        }
+
+        // 2. 在筛选结果基础上执行关键词搜索
+        if (!this.globalSearchQuery.trim()) {
+          // 如果搜索词为空，直接使用筛选结果
+          this.filteredSessions = searchResults;
+          Logger.debug('SideDrawerComponent', `无搜索关键词，显示${this.selectedRoleFilter ? '角色筛选' : '所有'}会话: ${searchResults.length} 个`);
+        } else {
+          Logger.debug('SideDrawerComponent', `在${searchResults.length}个会话中搜索关键词: "${this.globalSearchQuery}"`);
+
+          // 使用 SessionManager 的搜索方法，但先筛选会话范围
+          const sessionManager = this.chatViewModel?.getSessionManager();
+          if (sessionManager) {
+            // 如果有角色筛选，需要在筛选结果中进一步搜索
+            if (this.selectedRoleFilter) {
+              const query = this.globalSearchQuery.toLowerCase().trim();
+              const matchedSessions: Session[] = [];
+
+              for (const session of searchResults) {
+                // 检查会话标题
+                if (session.name.toLowerCase().includes(query)) {
+                  matchedSessions.push(session);
+                  continue;
+                }
+
+                // 检查会话消息内容
+                try {
+                  const messages = await sessionManager.getSessionMessages(session.id);
+                  const hasContentMatch = messages.some(msg =>
+                    msg.content && typeof msg.content === 'string' &&
+                    msg.content.toLowerCase().includes(query)
+                  );
+                  if (hasContentMatch) {
+                    matchedSessions.push(session);
+                  }
+                } catch (error) {
+                  Logger.warn('SideDrawerComponent', `搜索会话 ${session.id} 内容时出错: ${error}`);
+                }
+              }
+
+              this.filteredSessions = matchedSessions;
+              Logger.info('SideDrawerComponent', `角色筛选+关键词搜索完成，找到 ${matchedSessions.length} 个匹配会话`);
+            } else {
+              // 没有角色筛选，直接使用全局搜索
+              this.filteredSessions = await sessionManager.searchSessions(this.globalSearchQuery);
+              Logger.info('SideDrawerComponent', `全局搜索完成，找到 ${this.filteredSessions.length} 个匹配会话`);
+            }
           } else {
             Logger.warn('SideDrawerComponent', '未找到SessionManager，使用本地搜索（仅搜索会话名称）');
             // 如果没有 SessionManager，使用本地搜索作为后备方案
-            const query = this.searchQuery.toLowerCase().trim();
-            this.filteredSessions = this.sessions.filter(session =>
+            const query = this.globalSearchQuery.toLowerCase().trim();
+            this.filteredSessions = searchResults.filter(session =>
               session.name.toLowerCase().includes(query)
             );
             Logger.info('SideDrawerComponent', `本地搜索完成，找到 ${this.filteredSessions.length} 个匹配会话`);
@@ -974,7 +1109,7 @@ export struct SideDrawerComponent {
    * 更新过滤后的会话列表
    */
   private updateFilteredSessions(): void {
-    this.performSearch();
+    this.performGlobalSearch();
   }
 
   /**
@@ -1011,6 +1146,47 @@ export struct SideDrawerComponent {
       }
     } catch (error) {
       Logger.error('SideDrawerComponent', `处理角色选择失败: ${error}`);
+    }
+  }
+
+  /**
+   * 设置角色筛选器（供外部调用，用于快捷筛选）
+   */
+  public setRoleFilter(role: SystemPrompt): void {
+    try {
+      Logger.info('SideDrawerComponent', `设置角色筛选器: ${role.name}`);
+
+      this.selectedRoleFilter = role;
+      this.showRoleFilter = true;
+
+      // 切换到会话标签页
+      this.activeTab = 'sessions';
+
+      // 触发搜索更新
+      this.performGlobalSearch();
+
+      Logger.info('SideDrawerComponent', `角色筛选器设置完成，切换到会话标签页`);
+    } catch (error) {
+      Logger.error('SideDrawerComponent', `设置角色筛选器失败: ${error}`);
+    }
+  }
+
+  /**
+   * 清除角色筛选器
+   */
+  private clearRoleFilter(): void {
+    try {
+      Logger.info('SideDrawerComponent', '清除角色筛选器');
+
+      this.selectedRoleFilter = null;
+      this.showRoleFilter = false;
+
+      // 重新执行搜索，显示所有会话
+      this.performGlobalSearch();
+
+      Logger.info('SideDrawerComponent', '角色筛选器已清除');
+    } catch (error) {
+      Logger.error('SideDrawerComponent', `清除角色筛选器失败: ${error}`);
     }
   }
 

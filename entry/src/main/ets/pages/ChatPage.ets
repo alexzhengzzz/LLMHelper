@@ -970,30 +970,8 @@ struct ChatPage {
         this.showSideDrawer = true;
       })
 
-      // 中间：当前会话角色指示器
-      if (this.currentSessionRole) {
-        Row({ space: 4 }) {
-          Text(this.currentSessionRole.roleIcon || '🎭')
-            .fontSize(14)
-            .fontColor($r('app.color.primary_color'))
-          Text(this.currentSessionRole.name)
-            .fontSize(12)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .constraintSize({ maxWidth: 80 })
-        }
-        .padding({ left: 8, right: 8 })
-        .backgroundColor($r('app.color.card_background'))
-        .borderRadius(16)
-        .border({
-          width: 1,
-          color: $r('app.color.primary_color')
-        })
-      } else {
-        Blank()
-      }
+      // 中间：空白区域
+      Blank()
 
       // 右侧：功能按钮组
       Row({ space: 8 }) {

@@ -326,6 +326,7 @@ export class APIManager {
   async sendSmartChatRequest(
     message: string,
     model: string,
+    systemPrompt?: string,
     options?: SimpleChatOptions
   ): Promise<HybridChatResponse> {
     if (!this.state.isInitialized) {
@@ -360,6 +361,7 @@ export class APIManager {
         provider: modelProvider,
         enableSearch: currentState.features.enableWebSearch,
         enableTools: currentState.features.enableMCPTools,
+        systemPrompt: systemPrompt,
         stream: options?.stream || false,
         max_tokens: options?.max_tokens,
         temperature: options?.temperature
@@ -389,6 +391,7 @@ export class APIManager {
   async sendHybridChatRequest(
     message: string,
     model: string,
+    systemPrompt?: string,
     options?: SimpleChatOptions
   ): Promise<HybridChatResponse> {
     if (!this.state.isInitialized) {
@@ -414,6 +417,7 @@ export class APIManager {
         provider: modelProvider,
         enableSearch: false,
         enableTools: true,
+        systemPrompt: systemPrompt,
         stream: options?.stream || false,
         max_tokens: options?.max_tokens,
         temperature: options?.temperature

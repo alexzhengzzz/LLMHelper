@@ -380,12 +380,15 @@ export class ChatViewModel {
     
     if (currentMode === APIMode.DIRECT_CALL && enableWebSearch) {
       // 直连模式 + 联网搜索：使用混合聊天服务
+      const sessionPrompt = this.getCurrentSessionSystemPrompt();
+
       const hybridRequest: HybridChatRequest = {
         message: content,
         model: this.currentModel,
         provider: this.getAIProviderByName(this.currentProvider),
         enableSearch: enableWebSearch,
         enableTools: true, // 启用工具调用
+        systemPrompt: sessionPrompt?.content,
         stream: false,
         max_tokens: 1000,
         temperature: 0.7
@@ -485,10 +488,14 @@ export class ChatViewModel {
     assistantMessage: Message
   ): Promise<void> {
     try {
+      // 获取当前会话绑定的系统提示词
+      const sessionPrompt = this.getCurrentSessionSystemPrompt();
+
       // 使用APIManager的智能聊天功能
       const response = await this.apiManager.sendSmartChatRequest(
         content,
-        this.currentModel
+        this.currentModel,
+        sessionPrompt?.content
       );
 
       // 更新助手消息内容

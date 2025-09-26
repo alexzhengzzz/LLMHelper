@@ -11,6 +11,7 @@ import { COMMON_CONSTANTS } from '../utils/Constants';
 interface RoleCardProps {
   role: SystemPrompt;
   onRoleSelect?: (role: SystemPrompt) => void;
+  onViewHistory?: (role: SystemPrompt) => void;
 }
 
 /**
@@ -20,6 +21,7 @@ interface RoleCardProps {
 export struct RoleCardComponent {
   @Param @Require role: SystemPrompt = new SystemPrompt();
   @Param onRoleSelect: (role: SystemPrompt) => void = () => {};
+  @Param onViewHistory: (role: SystemPrompt) => void = () => {};
   @Local isDarkMode: boolean = false;
   @Local isPressed: boolean = false;
   @Local isHovered: boolean = false;
@@ -48,144 +50,118 @@ export struct RoleCardComponent {
     return colorMap[category] || '#F9FAFB';
   }
 
+
   aboutToAppear(): void {
     // 这里可以从主题管理器获取主题状态，暂时简化处理
   }
 
   build() {
-    Column() {
-      // 角色头部信息
-      Row() {
-        // 角色图标容器
-        Stack() {
-          Circle({ width: 48, height: 48 })
-            .fill(this.getCategoryLightBg(this.role.roleCategory))
-            .stroke(this.getCategoryColor(this.role.roleCategory))
-            .strokeWidth(1);
-
+    Stack() {
+      Column() {
+        // 角色头部信息
+        Row() {
+          // 角色图标
           Text(this.role.roleIcon || '🎭')
-            .fontSize(24)
-            .textAlign(TextAlign.Center);
-        }
-        .width(48)
-        .height(48)
-        .margin({ right: 16 });
+            .fontSize(32)
+            .textAlign(TextAlign.Center)
+            .width(48)
+            .height(48)
+            .margin({ right: 16 });
 
-        // 角色名称和分类
-        Column() {
-          Row() {
-            Text(this.role.name)
-              .fontSize(18)
-              .fontWeight(FontWeight.Medium)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .fontColor(this.isDarkMode ? '#FFFFFF' : '#1F2937')
-              .layoutWeight(1);
-
-            // 置顶标识
-            if (this.role.isPinned) {
-              Text('📌')
-                .fontSize(14)
-                .margin({ left: 4 });
-            }
-
-            // 内置角色标识
-            if (this.role.isBuiltIn) {
-              Text('🔒')
-                .fontSize(12)
-                .fontColor('#9CA3AF')
-                .margin({ left: 4 });
-            }
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center);
-
-          // 分类标签
-          if (this.role.roleCategory) {
+          // 角色名称和分类
+          Column() {
             Row() {
-              Text(this.getCategoryDisplayName(this.role.roleCategory))
-                .fontSize(12)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.getCategoryColor(this.role.roleCategory))
-                .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-                .backgroundColor(this.getCategoryLightBg(this.role.roleCategory))
-                .borderRadius(12);
+              Text(this.role.name)
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .fontColor(this.isDarkMode ? '#FFFFFF' : '#1F2937')
+                .layoutWeight(1);
+
+              // 置顶标识
+              if (this.role.isPinned) {
+                Text('📌')
+                  .fontSize(14)
+                  .margin({ left: 4 });
+              }
+
             }
             .width('100%')
-            .margin({ top: 4 });
-          }
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start);
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-      .margin({ bottom: 12 });
+            .alignItems(VerticalAlign.Center);
 
-      // 角色描述
-      if (this.role.roleDescription) {
-        Text(this.role.roleDescription)
-          .fontSize(14)
-          .fontWeight(FontWeight.Regular)
-          .fontColor(this.isDarkMode ? '#D1D5DB' : '#6B7280')
-          .maxLines(3)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .lineHeight(20)
-          .width('100%')
-          .margin({ bottom: 16 });
-      }
+            // 分类标签和历史按钮行
+            if (this.role.roleCategory) {
+              Row() {
+                Text(this.getCategoryDisplayName(this.role.roleCategory))
+                  .fontSize(12)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(this.getCategoryColor(this.role.roleCategory))
+                  .padding({ left: 10, right: 10, top: 3, bottom: 3 })
+                  .backgroundColor(this.getCategoryLightBg(this.role.roleCategory))
+                  .borderRadius(14);
 
-  
-      // 操作按钮区域
-      Row() {
-        // 基于角色创建会话按钮
-        Button() {
-          Row() {
-            Text('💬')
-              .fontSize(14)
-              .margin({ right: 6 });
-            Text('开始对话')
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium);
+                Blank();
+
+                // 历史按钮
+                Button() {
+                  Text('📚')
+                    .fontSize(14)
+                    .fontColor(this.isDarkMode ? '#FFFFFF' : '#666666');
+                }
+                .width(28)
+                .height(28)
+                .backgroundColor(this.isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)')
+                .borderRadius(14)
+                .onClick(() => {
+                  this.onViewRoleHistory();
+                })
+                .opacity(0.8);
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Center)
+              .margin({ top: 6 });
+            }
           }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start);
         }
-        .backgroundColor(COMMON_CONSTANTS.THEME_COLORS.primary)
-        .fontColor(Color.White)
-        .borderRadius(20)
-        .padding({ left: 20, right: 20, top: 10, bottom: 10 })
-        .onClick(() => {
-          this.onCreateSessionWithRole();
-        })
-        .layoutWeight(1)
-        .shadow({
-          radius: 4,
-          color: COMMON_CONSTANTS.THEME_COLORS.primary,
-          offsetX: 0,
-          offsetY: 2
-        });
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+        .margin({ bottom: 12 });
+
+        // 角色描述 - 降低透明度和减少行数
+        if (this.role.roleDescription) {
+          Text(this.role.roleDescription)
+            .fontSize(14)
+            .fontWeight(FontWeight.Regular)
+            .fontColor(this.isDarkMode ? '#9CA3AF' : '#9CA3AF')
+            .opacity(0.8)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .lineHeight(20)
+            .width('100%');
+        }
       }
-      .width('100%')
-      .justifyContent(FlexAlign.Center);
+      .width('100%');
     }
-    .padding(20)
+    .padding(16)
     .backgroundColor(this.isPressed ?
-      (this.isDarkMode ? '#2A2A2A' : '#F0F0F0') :
+      (this.isDarkMode ? '#2A2A2A' : '#F7F8FC') :
       (this.isDarkMode ? '#1E1E1E' : '#FFFFFF'))
-    .borderRadius(16)
+    .borderRadius(20)
     .shadow({
-      radius: this.isPressed ? 2 : 8,
-      color: '#000000',
+      radius: this.isPressed ? 4 : 12,
+      color: this.isDarkMode ? 'rgba(0, 0, 0, 0.3)' : 'rgba(0, 0, 0, 0.08)',
       offsetX: 0,
-      offsetY: this.isPressed ? 1 : 4
+      offsetY: this.isPressed ? 2 : 6
     })
     .border({
       width: 1,
-      color: this.isDarkMode ? '#333333' : '#E5E7EB'
+      color: this.isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.06)'
     })
     .onClick(() => {
-      if (this.onRoleSelect) {
-        this.onRoleSelect(this.role);
-      }
+      this.onCreateSessionWithRole();
     })
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) {
@@ -237,6 +213,24 @@ export struct RoleCardComponent {
       Logger.info('RoleCardComponent', `基于角色 ${this.role.name} 创建会话成功: ${session.id}`);
     } catch (error) {
       Logger.error('RoleCardComponent', `基于角色创建会话失败: ${error}`);
+    }
+  }
+
+  /**
+   * 查看角色历史会话
+   */
+  private onViewRoleHistory(): void {
+    try {
+      Logger.info('RoleCardComponent', `查看角色历史: ${this.role.name}`);
+
+      // 调用父组件传入的回调，触发角色筛选
+      if (this.onViewHistory) {
+        this.onViewHistory(this.role);
+      }
+
+      Logger.info('RoleCardComponent', `角色历史查看请求已发送: ${this.role.id}`);
+    } catch (error) {
+      Logger.error('RoleCardComponent', `查看角色历史失败: ${error}`);
     }
   }
 }

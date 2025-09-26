@@ -18,6 +18,7 @@ interface CategoryItem {
  */
 interface RoleViewProps {
   onRoleSelect?: (role: SystemPrompt) => void;
+  onRoleFilterRequest?: (role: SystemPrompt) => void;
 }
 
 /**
@@ -26,6 +27,7 @@ interface RoleViewProps {
 @ComponentV2
 export struct RoleViewComponent {
   @Param onRoleSelect: (role: SystemPrompt) => void = () => {};
+  @Param onRoleFilterRequest: (role: SystemPrompt) => void = () => {};
   @Local roles: SystemPrompt[] = [];
   @Local selectedCategory: string = 'all';
   @Local isLoading: boolean = true;
@@ -107,6 +109,16 @@ export struct RoleViewComponent {
     }
   }
 
+  /**
+   * 处理角色筛选请求（查看历史）
+   */
+  private onRoleFilterRequested(role: SystemPrompt): void {
+    Logger.info('RoleViewComponent', `请求查看角色历史: ${role.name}`);
+    if (this.onRoleFilterRequest) {
+      this.onRoleFilterRequest(role);
+    }
+  }
+
   
   build() {
     Column() {
@@ -136,6 +148,7 @@ export struct RoleViewComponent {
           }
         }
         .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
       }
       .width('100%')
       .margin({ bottom: 16 });
@@ -185,6 +198,9 @@ export struct RoleViewComponent {
                   role: role,
                   onRoleSelect: (selectedRole: SystemPrompt) => {
                     this.onRoleSelected(selectedRole);
+                  },
+                  onViewHistory: (selectedRole: SystemPrompt) => {
+                    this.onRoleFilterRequested(selectedRole);
                   }
                 });
               }

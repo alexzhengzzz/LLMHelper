@@ -6,7 +6,8 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { Configuration } from '@kit.AbilityKit';
 import { ThemeManager } from '../utils/ThemeManager';
 import { AppConfigManager } from '../utils/AppConfigManager';
-import {LocalToolManager } from '../services/LocalToolManager';
+import { LocalToolManager } from '../services/LocalToolManager';
+import { RoleManager } from '../utils/RoleManager';
 export default class EntryAbility extends UIAbility {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private appConfigManager: AppConfigManager = AppConfigManager.getInstance();
@@ -21,6 +22,14 @@ export default class EntryAbility extends UIAbility {
     } catch (e) {
       hilog.error(0x0000, 'testTag', `Failed to initialize LocalToolManager: ${e.message}`);
     }
+
+    // 初始化角色管理器
+    RoleManager.getInstance().initializeDefaultRoles().then(() => {
+      hilog.info(0x0000, 'testTag', 'RoleManager initialized successfully');
+    }).catch((error: Error) => {
+      hilog.error(0x0000, 'testTag', `Failed to initialize RoleManager: ${error.message}`);
+    });
+
     // 初始化应用配置管理器
     this.appConfigManager.initialize().then(() => {
       hilog.info(0x0000, 'testTag', 'AppConfigManager initialized successfully');

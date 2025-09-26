@@ -25,6 +25,13 @@ interface RouteParams {
   currentSessionId?: string;
 }
 
+interface CategoryInfo {
+  key: ExtendedRoleCategory;
+  name: string;
+  icon: string;
+  count: number;
+}
+
 /**
  * 角色管理页面 - 管理AI助手角色
  */
@@ -124,6 +131,11 @@ struct RoleManagerPage {
         }
         .margin({ top: this.statusBarHeight })
 
+        // 分类筛选器
+        if (this.roles.length > 0) {
+          this.buildCategoryFilter()
+        }
+
         // 角色列表
         if (this.roles.length > 0) {
           this.buildRoleList()
@@ -198,6 +210,44 @@ struct RoleManagerPage {
 
       Blank()
 
+      // 修复角色按钮
+      Button() {
+        Text('🔧')
+          .fontSize(16)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width(40)
+      .height(40)
+      .backgroundColor($r('app.color.input_background'))
+      .borderRadius(20)
+      .border({
+        width: 0.5,
+        color: $r('app.color.border_color')
+      })
+      .margin({ right: 8 })
+      .onClick(() => {
+        this.fixSystemPrompts();
+      })
+
+      // 刷新角色按钮
+      Button() {
+        Text('🔄')
+          .fontSize(16)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width(40)
+      .height(40)
+      .backgroundColor($r('app.color.input_background'))
+      .borderRadius(20)
+      .border({
+        width: 0.5,
+        color: $r('app.color.border_color')
+      })
+      .margin({ right: 8 })
+      .onClick(() => {
+        this.refreshRoles();
+      })
+
       // 现代化添加按钮 - 圆形图标按钮
       Button() {
         Text('+')
@@ -223,6 +273,122 @@ struct RoleManagerPage {
     .width('100%')
     .height(64)
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+    .backgroundColor($r('app.color.surface_color'))
+    .border({
+      width: { bottom: 0.5 },
+      color: $r('app.color.border_color')
+    })
+  }
+
+  @Builder
+  buildCategoryFilter() {
+    Column() {
+      Scroll() {
+        Row({ space: 12 }) {
+          ForEach([
+            { key: ExtendedRoleCategory.ALL, name: '全部', icon: '📝', count: this.roles.length },
+            { key: ExtendedRoleCategory.PROFESSIONAL, name: '专业', icon: '💼', count: this.roles.filter(r => r.roleCategory === RoleCategory.PROFESSIONAL).length },
+            { key: ExtendedRoleCategory.CREATIVE, name: '创意', icon: '🎨', count: this.roles.filter(r => r.roleCategory === RoleCategory.CREATIVE).length },
+            { key: ExtendedRoleCategory.LIFE, name: '生活', icon: '🏠', count: this.roles.filter(r => r.roleCategory === RoleCategory.LIFE).length },
+            { key: ExtendedRoleCategory.PSYCHOLOGY, name: '心理', icon: '💭', count: this.roles.filter(r => r.roleCategory === RoleCategory.PSYCHOLOGY).length },
+            { key: ExtendedRoleCategory.CUSTOM, name: '自定义', icon: '⚙️', count: this.roles.filter(r => r.roleCategory === RoleCategory.CUSTOM).length }
+          ], (category: CategoryInfo) => {
+            // 胶囊样式分类按钮
+            Button() {
+              Row({ space: 6 }) {
+                Text(category.icon)
+                  .fontSize(14)
+                  .fontColor(this.selectedCategory === category.key ? Color.White : $r('app.color.text_primary'))
+                  .transition({
+                    type: TransitionType.All,
+                    opacity: 1,
+                    scale: { x: 1, y: 1 }
+                  })
+
+                Text(category.name)
+                  .fontSize(14)
+                  .fontWeight(this.selectedCategory === category.key ? FontWeight.Medium : FontWeight.Normal)
+                  .fontColor(this.selectedCategory === category.key ? Color.White : $r('app.color.text_primary'))
+                  .transition({
+                    type: TransitionType.All,
+                    opacity: 1,
+                    scale: { x: 1, y: 1 }
+                  })
+
+                if (category.count > 0) {
+                  Text(`${category.count}`)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(this.selectedCategory === category.key ?
+                      'rgba(255, 255, 255, 0.8)' : $r('app.color.text_secondary'))
+                    .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                    .backgroundColor(this.selectedCategory === category.key ?
+                      'rgba(255, 255, 255, 0.2)' : $r('app.color.background_color'))
+                    .borderRadius(8)
+                    .transition({
+                      type: TransitionType.All,
+                      opacity: 1,
+                      scale: { x: 1, y: 1 }
+                    })
+                }
+              }
+              .alignItems(VerticalAlign.Center)
+              .justifyContent(FlexAlign.Center)
+            }
+            .height(36)
+            .padding({ left: 14, right: 14 })
+            .backgroundColor(this.selectedCategory === category.key ?
+              $r('app.color.primary_color') : $r('app.color.input_background'))
+            .borderRadius(18) // 完全圆角的胶囊样式
+            .border({
+              width: this.selectedCategory === category.key ? 0 : 0.5,
+              color: $r('app.color.border_color')
+            })
+            .shadow(this.selectedCategory === category.key ? {
+              radius: 8,
+              color: $r('app.color.primary_color_20'),
+              offsetY: 2,
+              offsetX: 0
+            } : {
+              radius: 2,
+              color: this.isDarkMode ? '#20000000' : '#08000000',
+              offsetY: 1,
+              offsetX: 0
+            })
+            .stateEffect(true)
+            .transition({
+              type: TransitionType.All,
+              opacity: 1,
+              scale: { x: 1, y: 1 }
+            })
+            .animation({
+              duration: 250,
+              curve: Curve.EaseInOut,
+              iterations: 1,
+              playMode: PlayMode.Normal
+            })
+            .onClick(() => {
+              // 添加选中动画效果
+              animateTo({
+                duration: 200,
+                curve: Curve.EaseInOut
+              }, () => {
+                this.selectedCategory = category.key;
+              });
+
+              // 应用筛选
+              this.applyFiltersAndSort();
+            })
+          }, (category: CategoryInfo) => category.key)
+        }
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: 16, right: 16 })
+      }
+      .scrollBar(BarState.Off)
+      .scrollable(ScrollDirection.Horizontal)
+    }
+    .width('100%')
+    .padding({ top: 12, bottom: 16 })
     .backgroundColor($r('app.color.surface_color'))
     .border({
       width: { bottom: 0.5 },
@@ -405,60 +571,88 @@ struct RoleManagerPage {
             }
           })
 
-          // 编辑按钮 - 占1/3宽度
+          // 编辑按钮 - 占1/3宽度（内置角色不可编辑）
           Button() {
             Row() {
-              Text('✏️')
+              Text(role.isBuiltIn ? '👁️' : '✏️')
                 .fontSize(14)
                 .margin({ right: 3 })
-              Text('编辑')
+              Text(role.isBuiltIn ? '查看' : '编辑')
                 .fontSize(12)
-                .fontColor($r('app.color.text_primary'))
+                .fontColor(role.isBuiltIn ? $r('app.color.text_secondary') : $r('app.color.text_primary'))
                 .fontWeight(FontWeight.Medium)
             }
             .alignItems(VerticalAlign.Center)
           }
           .height(40)
           .layoutWeight(1)
-          .backgroundColor($r('app.color.input_background'))
+          .backgroundColor(role.isBuiltIn ? $r('app.color.card_background') : $r('app.color.input_background'))
           .borderRadius(8)
           .border({
             width: 0.5,
             color: $r('app.color.border_color')
           })
-          .stateEffect(true)
+          .stateEffect(!role.isBuiltIn)
+          .enabled(!role.isBuiltIn)
           .onClick(() => {
-            this.editingRole = role;
-            this.editRoleName = role.name;
-            this.editRoleContent = role.content;
-            this.showEditDialog = true;
+            if (!role.isBuiltIn) {
+              this.editingRole = role;
+              this.editRoleName = role.name;
+              this.editRoleContent = role.content;
+              this.showEditDialog = true;
+            }
           })
 
-          // 删除按钮 - 占1/3宽度
-          Button() {
-            Row() {
-              Text('🗑️')
-                .fontSize(14)
-                .margin({ right: 3 })
-              Text('删除')
-                .fontSize(12)
-                .fontColor($r('app.color.error_color'))
-                .fontWeight(FontWeight.Medium)
+          // 删除按钮 - 占1/3宽度（内置角色不显示删除按钮）
+          if (!role.isBuiltIn) {
+            Button() {
+              Row() {
+                Text('🗑️')
+                  .fontSize(14)
+                  .margin({ right: 3 })
+                Text('删除')
+                  .fontSize(12)
+                  .fontColor($r('app.color.error_color'))
+                  .fontWeight(FontWeight.Medium)
+              }
+              .alignItems(VerticalAlign.Center)
             }
-            .alignItems(VerticalAlign.Center)
+            .height(40)
+            .layoutWeight(1)
+            .backgroundColor($r('app.color.input_background'))
+            .borderRadius(8)
+            .border({
+              width: 0.5,
+              color: $r('app.color.border_color')
+            })
+            .stateEffect(true)
+            .onClick(() => {
+              this.deleteRole(role);
+            })
+          } else {
+            // 内置角色显示标识
+            Button() {
+              Row() {
+                Text('📋')
+                  .fontSize(14)
+                  .margin({ right: 3 })
+                Text('内置')
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_secondary'))
+                  .fontWeight(FontWeight.Medium)
+              }
+              .alignItems(VerticalAlign.Center)
+            }
+            .height(40)
+            .layoutWeight(1)
+            .backgroundColor($r('app.color.card_background'))
+            .borderRadius(8)
+            .border({
+              width: 0.5,
+              color: $r('app.color.border_color')
+            })
+            .enabled(false)
           }
-          .height(40)
-          .layoutWeight(1)
-          .backgroundColor($r('app.color.input_background'))
-          .borderRadius(8)
-          .border({
-            width: 0.5,
-            color: $r('app.color.border_color')
-          })
-          .stateEffect(true)
-          .onClick(() => {
-            this.deleteRole(role);
-          })
         }
         .width('100%')
       }
@@ -957,7 +1151,9 @@ struct RoleManagerPage {
 
       // 按分类筛选
       if (this.selectedCategory !== ExtendedRoleCategory.ALL) {
-        filtered = filtered.filter(role => role.roleCategory === this.selectedCategory);
+        const categoryToFilter = this.selectedCategory as string;
+        filtered = filtered.filter(role => role.roleCategory === categoryToFilter);
+        Logger.debug('RoleManagerPage', `按分类 ${categoryToFilter} 筛选，结果: ${filtered.length} 个角色`);
       }
 
       // 按搜索查询筛选
@@ -986,6 +1182,9 @@ struct RoleManagerPage {
   private async addRole(): Promise<void> {
     try {
       Logger.info('RoleManagerPage', `开始添加角色: ${this.newRoleName.trim()}`);
+
+      // 确认：没有角色数量限制，用户可以创建任意数量的角色
+      Logger.info('RoleManagerPage', `当前角色数量: ${this.roles.length}，准备添加新角色`);
 
       // 使用RoleManager创建角色
       const newRole = await this.roleManager.createRole(
@@ -1102,5 +1301,99 @@ struct RoleManagerPage {
         action: () => {}
       }
     });
+  }
+
+  /**
+   * 修复系统提示词：将未标记为角色的系统提示词转换为角色，并修复角色分类
+   */
+  private async fixSystemPrompts(): Promise<void> {
+    try {
+      Logger.info('RoleManagerPage', '开始修复系统提示词和角色分类');
+
+      // 显示loading提示
+      promptAction.showToast({
+        message: '正在修复系统提示词和角色分类...',
+        duration: 3000
+      });
+
+      // 先修复系统提示词转角色
+      const convertedCount = await this.roleManager.convertSystemPromptsToRoles();
+
+      // 再修复角色分类
+      const categoryFixedCount = await this.roleManager.fixRoleCategories();
+
+      const totalFixed = convertedCount + categoryFixedCount;
+
+      if (totalFixed > 0) {
+        // 重新加载角色列表
+        await this.loadRoles();
+
+        // 显示成功提示
+        let message = '';
+        if (convertedCount > 0 && categoryFixedCount > 0) {
+          message = `成功修复 ${convertedCount} 个系统提示词，${categoryFixedCount} 个角色分类！`;
+        } else if (convertedCount > 0) {
+          message = `成功修复 ${convertedCount} 个系统提示词！`;
+        } else if (categoryFixedCount > 0) {
+          message = `成功修复 ${categoryFixedCount} 个角色分类！`;
+        }
+
+        promptAction.showToast({
+          message: message,
+          duration: 3000
+        });
+
+        Logger.info('RoleManagerPage', message);
+      } else {
+        // 显示没有需要修复的提示
+        promptAction.showToast({
+          message: '所有角色数据都已正确配置',
+          duration: 2000
+        });
+
+        Logger.info('RoleManagerPage', '没有需要修复的数据');
+      }
+    } catch (error) {
+      Logger.error('RoleManagerPage', `修复失败: ${error}`);
+      promptAction.showToast({
+        message: `修复失败: ${(error as Error).message}`,
+        duration: 3000
+      });
+    }
+  }
+
+  /**
+   * 刷新角色列表（强制重新初始化预置角色）
+   */
+  private async refreshRoles(): Promise<void> {
+    try {
+      Logger.info('RoleManagerPage', '开始刷新角色列表');
+
+      // 显示loading提示
+      promptAction.showToast({
+        message: '正在刷新角色列表...',
+        duration: 2000
+      });
+
+      // 强制重新初始化默认角色
+      await this.roleManager.forceInitializeDefaultRoles();
+
+      // 重新加载角色列表
+      await this.loadRoles();
+
+      // 显示成功提示
+      promptAction.showToast({
+        message: '角色列表已刷新！',
+        duration: 1500
+      });
+
+      Logger.info('RoleManagerPage', '角色列表刷新完成');
+    } catch (error) {
+      Logger.error('RoleManagerPage', `刷新角色列表失败: ${error}`);
+      promptAction.showToast({
+        message: `刷新失败: ${(error as Error).message}`,
+        duration: 3000
+      });
+    }
   }
 }

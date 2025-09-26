@@ -52,19 +52,6 @@ export struct NewSessionDialogComponent {
         .textAlign(TextAlign.Start)
         .padding({ left: 20, right: 20, bottom: 16 })
 
-      // 搜索框
-      TextInput({ placeholder: '搜索角色...', text: this.searchText })
-        .width('100%')
-        .height(40)
-        .backgroundColor($r('app.color.input_background'))
-        .borderRadius(20)
-        .padding({ left: 16, right: 16 })
-        .fontSize(14)
-        .margin({ left: 20, right: 20, bottom: 16 })
-        .onChange((value: string) => {
-          this.searchText = value;
-        })
-
       // 分隔线
       Divider()
         .color($r('app.color.border_color'))

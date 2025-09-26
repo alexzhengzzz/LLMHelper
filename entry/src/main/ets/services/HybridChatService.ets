@@ -16,6 +16,14 @@ import { AppContext } from '../utils/AppContext';
 import { TextContent, ImageContent } from '../types/MCPTypes';
 
 /**
+ * 消息接口，符合ArkTS严格类型要求
+ */
+interface ChatMessage {
+  role: string;
+  content: string;
+}
+
+/**
  * 混合聊天请求参数
  */
 export interface HybridChatRequest {
@@ -24,6 +32,7 @@ export interface HybridChatRequest {
   provider?: AIProvider;
   enableSearch: boolean;
   enableTools?: boolean;  // 新增：启用工具调用
+  systemPrompt?: string;  // 新增：系统提示词
   stream?: boolean;
   max_tokens?: number;
   temperature?: number;
@@ -231,6 +240,30 @@ export class HybridChatService {
       // 第四步：构建ChatRequest（支持Function Calling）
       let chatRequest: ChatRequest;
 
+      // 构建消息数组，包含系统提示词（如果存在）
+      const buildMessages = (userMessageText: string, systemPrompt?: string): ChatMessage[] => {
+        const messages: ChatMessage[] = [];
+
+        // 如果有系统提示词，添加为第一条消息
+        if (systemPrompt && systemPrompt.trim()) {
+          const systemMessage: ChatMessage = {
+            role: 'system',
+            content: systemPrompt.trim()
+          };
+          messages.push(systemMessage);
+          Logger.info('HybridChatService', `添加系统提示词: ${systemPrompt.substring(0, 50)}...`);
+        }
+
+        // 添加用户消息
+        const userMessage: ChatMessage = {
+          role: 'user',
+          content: userMessageText
+        };
+        messages.push(userMessage);
+
+        return messages;
+      };
+
       Logger.info('HybridChatService', `=== 工具启用检查 ===`);
       Logger.info('HybridChatService', `request.enableTools: ${request.enableTools}`);
       Logger.info('HybridChatService', `this.localToolManager: ${this.localToolManager ? '已初始化' : '未初始化'}`);
@@ -244,14 +277,11 @@ export class HybridChatService {
         Logger.info('HybridChatService', `获取到的工具数量: ${tools.length}`);
         Logger.info('HybridChatService', `工具详情: ${JSON.stringify(tools, null, 2)}`);
 
+        const messages = buildMessages(finalMessage, request.systemPrompt);
+
         const fcRequest: FunctionCallingChatRequest = {
           model: request.model,
-          messages: [
-            {
-              role: 'user',
-              content: finalMessage,
-            }
-          ],
+          messages: messages,
           tools: tools,
           tool_choice: 'auto',
           enable_web: request.enableSearch
@@ -270,13 +300,10 @@ export class HybridChatService {
         Logger.info('HybridChatService', `=== 已添加 ${tools.length} 个工具到请求中 ===`);
       } else {
         // 普通聊天请求
+        const messages = buildMessages(finalMessage, request.systemPrompt);
+
         chatRequest = {
-          messages: [
-            {
-              role: 'user',
-              content: finalMessage
-            }
-          ],
+          messages: messages,
           model: request.model,
           stream: request.stream || false,
           max_tokens: request.max_tokens,
