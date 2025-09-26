@@ -7,23 +7,14 @@ import { router } from '@kit.ArkUI';
 import { Logger } from '../utils/Logger';
 import {
   MCPTool,
-  ToolCallRequest,
-  ToolCallResult,
-  JSONSchema,
-  ParamType,
-  TextContent,
-  ImageContent,
   MCPToolConfig,
-  MCPToolCategory,
-  MCPToolStatus,
   ToolStatistics,
-  ToolOperationResult
 } from '../types/MCPTypes';
 import { LocalToolManager } from '../services/LocalToolManager';
 import { AppContext } from '../utils/AppContext';
 import { AIServiceStateManager } from '../utils/AIServiceStateManager';
 import { AppStorage, MCPToolsConfig } from '../utils/AppStorage';
-import { window } from '@kit.ArkUI';
+import { MCPToolTestDialog } from '../components/MCPToolTestDialog';
 
 interface ToolCategoryInfo {
   key: string;
@@ -42,10 +33,7 @@ struct MCPSettingsPage {
   @Local private toolsConfig: MCPToolsConfig | null = null;
   @Local private toolStatistics: ToolStatistics | null = null;
   @Local private selectedTool: MCPTool | null = null;
-  @Local private toolParams: ParamType = {};
-  @Local private isExecuting: boolean = false;
-  @Local private executionResult: ToolCallResult | null = null;
-  @Local private showResult: boolean = false;
+  @Local private showToolTestDialog: boolean = false;
   @Local private searchText: string = '';
   @Local private selectedCategory: string = 'all';
   @Local private statusBarHeight: number = 44; // 状态栏高度，动态获取
@@ -77,6 +65,16 @@ struct MCPSettingsPage {
     } catch (error) {
       Logger.error('MCPSettingsPage', 'Failed to initialize', error);
     }
+  }
+
+  onBackPress(): boolean {
+    // 当弹框显示时，拦截back事件并关闭弹框
+    if (this.showToolTestDialog) {
+      Logger.info('MCPSettingsPage', 'Back pressed while dialog is open, closing dialog');
+      this.closeToolTestDialog();
+      return true; // 阻止默认的back行为
+    }
+    return false; // 允许默认的back行为（返回上一页）
   }
 
   onPageShow(): void {
@@ -112,13 +110,13 @@ struct MCPSettingsPage {
    */
   private async loadAvailableTools(): Promise<void> {
     if (this.localToolManager) {
-      // 加载所有注册的工具（包括禁用的）
-      this.availableTools = this.localToolManager.getAllRegisteredTools();
+      // 加载所有注册的工具（包括禁用的）- 只在初始化时加载一次
+      if (this.availableTools.length === 0) {
+        this.availableTools = this.localToolManager.getAllRegisteredTools();
+      }
 
-      // 加载工具配置
+      // 加载工具配置和统计信息
       this.toolConfigs = await this.localToolManager.getAllToolConfigs();
-
-      // 加载工具统计信息
       this.toolStatistics = await this.localToolManager.getToolStatistics();
 
       Logger.info('MCPSettingsPage', `Loaded ${this.availableTools.length} tools, ${this.toolConfigs.length} configs`);
@@ -178,8 +176,11 @@ struct MCPSettingsPage {
    */
   private async refreshData(): Promise<void> {
     try {
-      await this.loadAvailableTools();
-      await this.loadToolsConfig();
+      // 只更新必要的工具配置和统计信息，避免完整页面重载
+      if (this.localToolManager) {
+        this.toolConfigs = await this.localToolManager.getAllToolConfigs();
+        this.toolStatistics = await this.localToolManager.getToolStatistics();
+      }
       this.loadMCPState();
       Logger.info('MCPSettingsPage', '数据刷新完成');
     } catch (error) {
@@ -195,22 +196,19 @@ struct MCPSettingsPage {
       return;
     }
 
-    this.isUpdatingTools = true;
-
     try {
       const result = await this.localToolManager.setToolEnabled(toolName, enabled);
 
       if (result.success) {
         Logger.info('MCPSettingsPage', `工具 ${toolName} 状态更新成功: ${enabled}`);
-        // 刷新数据
-        await this.refreshData();
+        // 只更新工具配置，避免完整页面重载
+        this.toolConfigs = await this.localToolManager.getAllToolConfigs();
+        this.toolStatistics = await this.localToolManager.getToolStatistics();
       } else {
         Logger.error('MCPSettingsPage', `工具 ${toolName} 状态更新失败: ${result.error}`);
       }
     } catch (error) {
       Logger.error('MCPSettingsPage', `设置工具状态失败: ${error}`);
-    } finally {
-      this.isUpdatingTools = false;
     }
   }
 
@@ -229,7 +227,9 @@ struct MCPSettingsPage {
 
       if (result.success) {
         Logger.info('MCPSettingsPage', '所有工具已启用');
-        await this.refreshData();
+        // 只更新工具配置，避免完整页面重载
+        this.toolConfigs = await this.localToolManager.getAllToolConfigs();
+        this.toolStatistics = await this.localToolManager.getToolStatistics();
       } else {
         Logger.error('MCPSettingsPage', `启用所有工具失败: ${result.error}`);
       }
@@ -255,7 +255,9 @@ struct MCPSettingsPage {
 
       if (result.success) {
         Logger.info('MCPSettingsPage', '所有工具已禁用');
-        await this.refreshData();
+        // 只更新工具配置，避免完整页面重载
+        this.toolConfigs = await this.localToolManager.getAllToolConfigs();
+        this.toolStatistics = await this.localToolManager.getToolStatistics();
       } else {
         Logger.error('MCPSettingsPage', `禁用所有工具失败: ${result.error}`);
       }
@@ -351,79 +353,65 @@ struct MCPSettingsPage {
   }
 
   /**
-   * 执行工具
+   * 打开工具测试对话框
    */
-  private async executeTool(): Promise<void> {
-    if (!this.selectedTool || !this.localToolManager) {
-      return;
-    }
-
-    this.isExecuting = true;
-    this.executionResult = null;
-
-    try {
-      const request: ToolCallRequest = {
-        name: this.selectedTool.name,
-        arguments: this.toolParams
-      };
-
-      Logger.info('MCPSettingsPage', `Executing tool: ${this.selectedTool.name}`, JSON.stringify(this.toolParams));
-
-      const result = await this.localToolManager.executeTool(request);
-      this.executionResult = result;
-      this.showResult = true;
-
-      Logger.info('MCPSettingsPage', `Tool execution completed: ${this.selectedTool.name}`, JSON.stringify({
-        success: !result.isError
-      }));
-
-    } catch (error) {
-      Logger.error('MCPSettingsPage', `Tool execution failed: ${this.selectedTool.name}`, error);
-      this.executionResult = {
-        content: [{
-          type: 'text',
-          text: `工具执行失败: ${error instanceof Error ? error.message : '未知错误'}`
-        }],
-        isError: true
-      };
-      this.showResult = true;
-    } finally {
-      this.isExecuting = false;
-    }
+  private openToolTestDialog(tool: MCPTool): void {
+    Logger.info('MCPSettingsPage', `Opening test dialog for tool: ${tool.name}`);
+    this.selectedTool = tool;
+    this.showToolTestDialog = true;
   }
 
   /**
-   * 重置参数
+   * 关闭工具测试对话框
    */
-  private resetParams(): void {
-    this.toolParams = {} as ParamType;
-    this.executionResult = null;
-    this.showResult = false;
+  private closeToolTestDialog(): void {
+    this.showToolTestDialog = false;
+    this.selectedTool = null;
   }
 
   build() {
-    Column() {
-      // 顶部导航栏 - 添加状态栏高度避让
+    Stack() {
       Column() {
+        // 顶部导航栏 - 添加状态栏高度避让
         this.buildNavigationBar()
-      }
-      .margin({ top: this.statusBarHeight })
 
-      // MCP控制区域 - 始终在页面上方
-      this.buildMCPControlSection()
+        // MCP控制区域 - 始终在页面上方
+        this.buildMCPControlSection()
 
-      Scroll() {
-        Column({ space: 16 }) {
-          this.buildMCPToolsSection()
+        Scroll() {
+          Column({ space: 24 }) {
+            this.buildMCPToolsSection()
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16 })
         }
-        .width('100%')
-        .padding(16)
+        .layoutWeight(1)
       }
-      .layoutWeight(1)
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.background_color'))
+      .margin({ top: 16, bottom: 8 })
+
+      // 工具测试对话框
+      if (this.showToolTestDialog && this.selectedTool) {
+        this.buildToolTestDialog()
+      }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.background_color'))
+  }
+
+  private resetParams(): void {
+    // For dialog state reset
+    this.showToolTestDialog = false;
+    this.selectedTool = null;
+  }
+
+  // 工具测试对话框在需要时通过状态管理显示
+  private showToolTestDialogInternal(): void {
+    if (this.showToolTestDialog && this.selectedTool) {
+      this.buildToolTestDialog()
+    }
   }
 
   @Builder
@@ -436,46 +424,52 @@ struct MCPSettingsPage {
       }
       .type(ButtonType.Normal)
       .backgroundColor(Color.Transparent)
+      .width(44)
+      .height(44)
+      .borderRadius(22)
       .onClick(() => {
         router.back();
       })
+      .expandSafeArea([SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.START])
 
       Text('MCP Settings')
-        .fontSize(20)
+        .fontSize(22)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
         .layoutWeight(1)
         .textAlign(TextAlign.Center)
+        .margin({top: 20})
+        .expandSafeArea([SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.START])
 
       Blank()
         .width(48)
     }
     .width('100%')
-    .height(56)
+    .height(64)
     .padding({ left: 16, right: 16 })
     .justifyContent(FlexAlign.SpaceBetween)
-    .border({
-      width: { bottom: 1 },
-      color: $r('app.color.border_color')
-    })
+    .expandSafeArea([SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.START])
   }
 
   @Builder
   buildMCPControlSection() {
-    Column({ space: 16 }) {
+    Column({ space: 20 }) {
       Text('MCP 工具控制')
-        .fontSize(16)
+        .fontSize(18)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
         .alignSelf(ItemAlign.Start)
 
-      Row({ space: 12 }) {
+      Row({ space: 16 }) {
         Text('启用 MCP 工具')
-          .fontSize(14)
+          .fontSize(16)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
+          .lineHeight(22)
 
         Toggle({ type: ToggleType.Switch, isOn: this.mcpEnabled })
+          .width(52)
+          .height(32)
           .onChange((isOn: boolean) => {
             this.mcpEnabled = isOn;
             this.saveMCPState(isOn);
@@ -484,34 +478,40 @@ struct MCPSettingsPage {
       }
       .width('100%')
       .justifyContent(FlexAlign.SpaceBetween)
+      .alignItems(VerticalAlign.Center)
 
       if (this.mcpEnabled) {
         Text('MCP 工具已启用，可以在对话中使用本地工具功能')
-          .fontSize(12)
+          .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
-          .lineHeight(18)
+          .lineHeight(20)
       } else {
         Text('MCP 工具已禁用，本地工具功能不可用')
-          .fontSize(12)
+          .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
-          .lineHeight(18)
+          .lineHeight(20)
       }
     }
     .width('95%')
-    .margin({ left: 16, right: 16, bottom: 16 })
-    .padding(16)
+    .padding(24)
     .backgroundColor($r('app.color.surface_color'))
-    .borderRadius(12)
+    .borderRadius(16)
+    .shadow({
+      radius: 8,
+      color: Color.Gray,
+      offsetX: 0,
+      offsetY: 2
+    })
   }
 
   @Builder
   buildMCPToolsSection() {
     if (this.mcpEnabled) {
-      Column({ space: 20 }) {
+      Column({ space: 24 }) {
         // 搜索和分类筛选
-        Column({ space: 16 }) {
+        Column({ space: 20 }) {
           Text('工具管理')
-            .fontSize(18)
+            .fontSize(20)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
             .alignSelf(ItemAlign.Start)
@@ -522,13 +522,15 @@ struct MCPSettingsPage {
             text: this.searchText
           })
             .fontSize(16)
-            .backgroundColor(Color.White)
-            .borderRadius(8)
-            .height(48)
-            .padding({ left: 16, right: 16 })
-            .border({
-              width: 1,
-              color: $r('app.color.border_color')
+            .backgroundColor($r('app.color.input_background'))
+            .borderRadius(12)
+            .height(52)
+            .padding({ left: 20, right: 20 })
+            .shadow({
+              radius: 4,
+              color: Color.Gray,
+              offsetX: 0,
+              offsetY: 1
             })
             .onChange((value: string) => {
               this.searchText = value;
@@ -540,17 +542,21 @@ struct MCPSettingsPage {
               Button(`${category.name} (${category.count})`)
                 .type(ButtonType.Normal)
                 .backgroundColor(this.selectedCategory === category.key ?
-                  $r('app.color.primary_color') : Color.Transparent)
+                  $r('app.color.primary_color') : $r('app.color.input_background'))
                 .fontColor(this.selectedCategory === category.key ?
                   Color.White : $r('app.color.text_secondary'))
-                .borderWidth(1)
-                .borderColor(this.selectedCategory === category.key ?
-                  $r('app.color.primary_color') : $r('app.color.border_color'))
+                .borderWidth(0)
                 .borderRadius(20)
                 .fontSize(14)
-                .height(36)
-                .padding({ left: 16, right: 16 })
-                .margin({ right: 8, bottom: 8 })
+                .height(40)
+                .padding({ left: 18, right: 18 })
+                .margin({ right: 10, bottom: 10 })
+                .shadow({
+                  radius: this.selectedCategory === category.key ? 6 : 2,
+                  color: Color.Gray,
+                  offsetX: 0,
+                  offsetY: this.selectedCategory === category.key ? 2 : 1
+                })
                 .onClick(() => {
                   this.selectedCategory = category.key;
                 })
@@ -559,19 +565,25 @@ struct MCPSettingsPage {
           .width('100%')
         }
         .width('100%')
-        .padding(20)
+        .padding(24)
         .backgroundColor($r('app.color.surface_color'))
-        .borderRadius(12)
+        .borderRadius(16)
+        .shadow({
+          radius: 8,
+          color: Color.Gray,
+          offsetX: 0,
+          offsetY: 2
+        })
 
         // 批量操作按钮
         this.buildBatchOperationsSection()
 
         // 工具列表
         if (this.getFilteredTools().length > 0) {
-          Column({ space: 16 }) {
-            Row({ space: 12 }) {
+          Column({ space: 20 }) {
+            Row({ space: 16 }) {
               Text(`工具列表 (${this.getFilteredTools().length})`)
-                .fontSize(18)
+                .fontSize(20)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
                 .layoutWeight(1)
@@ -579,28 +591,45 @@ struct MCPSettingsPage {
               if (this.showStatistics && this.toolStatistics) {
                 Button('隐藏统计')
                   .type(ButtonType.Normal)
-                  .backgroundColor(Color.Transparent)
+                  .backgroundColor($r('app.color.input_background'))
+                  .borderWidth(0)
                   .fontColor($r('app.color.text_secondary'))
                   .fontSize(14)
-                  .height(32)
-                  .padding({ left: 12, right: 12 })
+                  .height(36)
+                  .padding({ left: 16, right: 16 })
+                  .borderRadius(18)
+                  .shadow({
+                    radius: 2,
+                    color: Color.Gray,
+                    offsetX: 0,
+                    offsetY: 1
+                  })
                   .onClick(() => {
                     this.showStatistics = false;
                   })
               } else {
                 Button('显示统计')
                   .type(ButtonType.Normal)
-                  .backgroundColor(Color.Transparent)
-                  .fontColor($r('app.color.primary_color'))
+                  .backgroundColor($r('app.color.primary_color'))
+                  .borderWidth(0)
+                  .fontColor(Color.White)
                   .fontSize(14)
-                  .height(32)
-                  .padding({ left: 12, right: 12 })
+                  .height(36)
+                  .padding({ left: 16, right: 16 })
+                  .borderRadius(18)
+                  .shadow({
+                    radius: 4,
+                    color: Color.Gray,
+                    offsetX: 0,
+                    offsetY: 2
+                  })
                   .onClick(() => {
                     this.showStatistics = true;
                   })
               }
             }
             .width('100%')
+            .alignItems(VerticalAlign.Center)
 
             // 工具统计信息
             if (this.showStatistics && this.toolStatistics) {
@@ -612,422 +641,93 @@ struct MCPSettingsPage {
             });
           }
           .width('100%')
-          .padding(20)
+          .padding(24)
           .backgroundColor($r('app.color.surface_color'))
-          .borderRadius(12)
-        }
-
-        // 参数表单
-        if (this.selectedTool) {
-          this.buildParameterForm();
-        }
-
-        // 执行结果
-        if (this.showResult && this.executionResult) {
-          this.buildExecutionResult();
-        }
-
-        // 加载状态
-        if (this.isExecuting) {
-          this.buildLoadingState();
-        }
-      }
-      .width('100%')
-      .padding(16)
-      .backgroundColor($r('app.color.surface_color'))
-      .borderRadius(12)
-    }
-  }
-
-  /**
-   * 渲染参数输入表单
-   */
-  @Builder
-  buildParameterForm() {
-    if (this.selectedTool) {
-      Column({ space: 20 }) {
-        Text('参数设置')
-          .fontSize(18)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .alignSelf(ItemAlign.Start)
-
-        this.buildParameterInputs()
-
-        Row({ space: 16 }) {
-          Button('重置')
-            .type(ButtonType.Normal)
-            .backgroundColor(Color.Transparent)
-            .borderWidth(1)
-            .borderColor($r('app.color.border_color'))
-            .fontColor($r('app.color.text_secondary'))
-            .borderRadius(8)
-            .height(48)
-            .layoutWeight(1)
-            .onClick(() => {
-              this.resetParams();
-            })
-
-          Button('执行')
-            .type(ButtonType.Normal)
-            .backgroundColor($r('app.color.primary_color'))
-            .fontColor(Color.White)
-            .borderRadius(8)
-            .height(48)
-            .layoutWeight(1)
-            .enabled(!this.isExecuting)
-            .onClick(() => {
-              this.executeTool();
-            })
-        }
-        .width('100%')
-      }
-      .width('100%')
-      .padding(20)
-      .backgroundColor($r('app.color.surface_color'))
-      .borderRadius(12)
-    }
-  }
-
-  @Builder
-  buildParameterInputs() {
-    ForEach(this.getParameterNames(), (paramName: string) => {
-      if (this.getParameterSchema(paramName)) {
-        this.buildParameterInput(paramName, this.getParameterSchema(paramName));
-      }
-    });
-  }
-
-  private getParameterNames(): Array<string> {
-    const properties = this.selectedTool!.inputSchema.properties || {};
-    return Object.keys(properties);
-  }
-
-  private getParameterSchema(paramName: string): JSONSchema | undefined {
-    const properties = this.selectedTool!.inputSchema.properties || {};
-    return properties[paramName];
-  }
-
-  /**
-   * 构建参数输入项
-   */
-  @Builder
-  buildParameterInput(paramName: string, schema: JSONSchema | undefined) {
-    if (schema) {
-      Column({ space: 12 }) {
-        Column({ space: 6 }) {
-          Row() {
-            Text(paramName)
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.text_primary'))
-
-            if (this.selectedTool?.inputSchema.required?.includes(paramName)) {
-              Text(' *')
-                .fontSize(16)
-                .fontColor('#F44336')
-            }
-          }
-          .width('100%')
-          .justifyContent(FlexAlign.Start)
-
-          if (schema.description) {
-            Text(schema.description)
-              .fontSize(14)
-              .fontColor($r('app.color.text_secondary'))
-              .lineHeight(20)
-              .width('100%')
-              .textAlign(TextAlign.Start)
-          }
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-
-        if (schema.type === 'string' && schema.enum) {
-          // 枚举选择
-          this.buildEnumSelector(paramName, schema.enum as Array<string>);
-        } else if (schema.type === 'boolean') {
-          // 布尔开关
-          this.buildBooleanToggle(paramName);
-        } else if (schema.type === 'number') {
-          // 数字输入
-          this.buildNumberInput(paramName, schema);
-        } else {
-          // 文本输入
-          this.buildTextInput(paramName, schema);
-        }
-      }
-      .width('100%')
-      .padding(16)
-      .backgroundColor($r('app.color.input_background'))
-      .borderRadius(12)
-      .border({
-        width: 1,
-        color: $r('app.color.border_color')
-      })
-    }
-  }
-
-  /**
-   * 构建枚举选择器
-   */
-  @Builder
-  buildEnumSelector(paramName: string, options: Array<string>) {
-    Flex({ wrap: FlexWrap.Wrap }) {
-      ForEach(options, (option: string) => {
-        Button(option)
-          .type(ButtonType.Normal)
-          .backgroundColor(this.toolParams[paramName] === option ?
-            $r('app.color.primary_color') : Color.Transparent)
-          .fontColor(this.toolParams[paramName] === option ?
-            Color.White : $r('app.color.text_secondary'))
-          .borderWidth(1)
-          .borderColor(this.toolParams[paramName] === option ?
-            $r('app.color.primary_color') : $r('app.color.border_color'))
-          .borderRadius(8)
-          .fontSize(14)
-          .height(44)
-          .padding({ left: 16, right: 16 })
-          .margin({ right: 8, bottom: 8 })
-          .onClick(() => {
-            this.toolParams[paramName] = option;
+          .borderRadius(16)
+          .shadow({
+            radius: 8,
+            color: Color.Gray,
+            offsetX: 0,
+            offsetY: 2
           })
-      });
-    }
-    .width('100%')
-  }
-
-  /**
-   * 构建布尔开关
-   */
-  @Builder
-  buildBooleanToggle(paramName: string) {
-    Row() {
-      Toggle({ type: ToggleType.Switch, isOn: this.toolParams[paramName] as boolean || false })
-        .width(60)
-        .height(32)
-        .onChange((isOn: boolean) => {
-          this.toolParams[paramName] = isOn;
-        })
-    }
-    .width('100%')
-    .height(44)
-    .justifyContent(FlexAlign.Start)
-    .alignItems(VerticalAlign.Center)
-  }
-
-  /**
-   * 构建数字输入
-   */
-  @Builder
-  buildNumberInput(paramName: string, schema: JSONSchema) {
-    TextInput({
-      placeholder: `输入数字${schema.minimum !== undefined ? ` (${schema.minimum}-${schema.maximum || '∞'})` : ''}`,
-      text: this.toolParams[paramName]?.toString() || ''
-    })
-      .type(InputType.Number)
-      .fontSize(16)
-      .backgroundColor(Color.White)
-      .borderRadius(8)
-      .height(48)
-      .padding({ left: 16, right: 16 })
-      .border({
-        width: 1,
-        color: $r('app.color.border_color')
-      })
-      .onChange((value: string) => {
-        const numValue = parseFloat(value);
-        if (!isNaN(numValue)) {
-          this.toolParams[paramName] = numValue;
-        } else {
-          // 从对象中移除该属性
-          const newParams: ParamType = {};
-          Object.keys(this.toolParams).forEach((key: string) => {
-            if (key !== paramName) {
-              newParams[key] = this.toolParams[key];
-            }
-          });
-          this.toolParams = newParams;
         }
-      })
-  }
 
-  /**
-   * 构建文本输入
-   */
-  @Builder
-  buildTextInput(paramName: string, schema: JSONSchema) {
-    TextInput({
-      placeholder: `请输入${paramName}`,
-      text: this.toolParams[paramName] as string || ''
-    })
-      .fontSize(16)
-      .backgroundColor(Color.White)
-      .borderRadius(8)
-      .height(48)
-      .padding({ left: 16, right: 16 })
-      .border({
-        width: 1,
-        color: $r('app.color.border_color')
-      })
-      .onChange((value: string) => {
-        if (value.trim()) {
-          this.toolParams[paramName] = value;
-        } else {
-          // 从对象中移除该属性
-          const newParams: ParamType = {};
-          Object.keys(this.toolParams).forEach((key: string) => {
-            if (key !== paramName) {
-              newParams[key] = this.toolParams[key];
-            }
-          });
-          this.toolParams = newParams;
         }
-      })
-  }
-
-  /**
-   * 构建执行结果
-   */
-  @Builder
-  buildExecutionResult() {
-    Column({ space: 16 }) {
-      Row() {
-        Text('执行结果')
-          .fontSize(18)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-
-        Button('关闭')
-          .type(ButtonType.Normal)
-          .backgroundColor(Color.Transparent)
-          .fontColor($r('app.color.text_secondary'))
-          .fontSize(14)
-          .height(40)
-          .padding({ left: 16, right: 16 })
-          .onClick(() => {
-            this.showResult = false;
-          })
-      }
       .width('100%')
-
-      Scroll() {
-        Column({ space: 12 }) {
-          ForEach(this.executionResult!.content, (content: TextContent | ImageContent) => {
-            if (content.type === 'text' && (content as TextContent).text) {
-              Text((content as TextContent).text)
-                .fontSize(14)
-                .fontColor(this.executionResult!.isError ?
-                  '#F44336' : $r('app.color.text_primary'))
-                .backgroundColor(this.executionResult!.isError ?
-                  '#FFF5F5' : $r('app.color.code_background'))
-                .padding(16)
-                .borderRadius(8)
-                .width('100%')
-                .textAlign(TextAlign.Start)
-                .copyOption(CopyOptions.InApp)
-                .lineHeight(20)
-            }
-          });
-        }
-        .width('100%')
-      }
-      .constraintSize({ minHeight: 120, maxHeight: 300 })
+      .padding({top: 16, bottom: 16, left: 2, right: 2})
+      .borderRadius(12)
     }
-    .width('100%')
-    .padding(20)
-    .backgroundColor($r('app.color.surface_color'))
-    .borderRadius(12)
-    .border({
-      width: 2,
-      color: this.executionResult!.isError ? '#F44336' : '#4CAF50'
-    })
   }
 
-  /**
-   * 构建加载状态
-   */
-  @Builder
-  buildLoadingState() {
-    Column({ space: 16 }) {
-      LoadingProgress()
-        .width(40)
-        .height(40)
-        .color($r('app.color.primary_color'))
-
-      Text('正在执行工具...')
-        .fontSize(16)
-        .fontColor($r('app.color.text_primary'))
-        .fontWeight(FontWeight.Medium)
-
-      Text('请稍候，工具正在处理您的请求')
-        .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
-    }
-    .width('100%')
-    .height(120)
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor($r('app.color.surface_color'))
-    .borderRadius(12)
-    .border({
-      width: 1,
-      color: $r('app.color.primary_color')
-    })
-  }
-
+  
   /**
    * 构建批量操作区域
    */
   @Builder
   buildBatchOperationsSection() {
-    Column({ space: 12 }) {
+    Column({ space: 20 }) {
       Text('批量操作')
-        .fontSize(16)
+        .fontSize(18)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
         .alignSelf(ItemAlign.Start)
 
-      Row({ space: 12 }) {
-        Button('全部启用')
+      Row({ space: 16 }) {
+        Button('启用')
           .type(ButtonType.Normal)
           .backgroundColor($r('app.color.primary_color'))
           .fontColor(Color.White)
-          .borderRadius(8)
-          .fontSize(14)
-          .height(40)
+          .borderRadius(12)
+          .fontSize(15)
+          .height(44)
           .layoutWeight(1)
           .enabled(!this.isUpdatingTools)
+          .shadow({
+            radius: 4,
+            color: Color.Gray,
+            offsetX: 0,
+            offsetY: 2
+          })
           .onClick(() => {
             this.enableAllTools();
           })
 
-        Button('全部禁用')
+        Button('禁用')
           .type(ButtonType.Normal)
-          .backgroundColor(Color.Transparent)
-          .borderWidth(1)
-          .borderColor($r('app.color.border_color'))
+          .backgroundColor($r('app.color.input_background'))
+          .borderWidth(0)
           .fontColor($r('app.color.text_secondary'))
-          .borderRadius(8)
-          .fontSize(14)
-          .height(40)
+          .borderRadius(12)
+          .fontSize(15)
+          .height(44)
           .layoutWeight(1)
           .enabled(!this.isUpdatingTools)
+          .shadow({
+            radius: 2,
+            color: Color.Gray,
+            offsetX: 0,
+            offsetY: 1
+          })
           .onClick(() => {
             this.disableAllTools();
           })
 
         Button('刷新')
           .type(ButtonType.Normal)
-          .backgroundColor(Color.Transparent)
-          .borderWidth(1)
-          .borderColor($r('app.color.primary_color'))
-          .fontColor($r('app.color.primary_color'))
-          .borderRadius(8)
-          .fontSize(14)
-          .height(40)
-          .padding({ left: 16, right: 16 })
+          .backgroundColor($r('app.color.primary_color'))
+          .borderWidth(0)
+          .fontColor(Color.White)
+          .borderRadius(12)
+          .fontSize(15)
+          .height(44)
+          .padding({ left: 20, right: 20 })
           .enabled(!this.isUpdatingTools)
+          .shadow({
+            radius: 4,
+            color: Color.Gray,
+            offsetX: 0,
+            offsetY: 2
+          })
           .onClick(() => {
             this.refreshData();
           })
@@ -1035,24 +735,33 @@ struct MCPSettingsPage {
       .width('100%')
 
       if (this.isUpdatingTools) {
-        Row({ space: 8 }) {
+        Row({ space: 12 }) {
           LoadingProgress()
-            .width(16)
-            .height(16)
+            .width(18)
+            .height(18)
             .color($r('app.color.primary_color'))
 
           Text('正在更新工具状态...')
-            .fontSize(14)
+            .fontSize(15)
             .fontColor($r('app.color.text_secondary'))
+            .lineHeight(20)
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 12, bottom: 12 })
       }
     }
     .width('100%')
-    .padding(16)
+    .padding(28)
     .backgroundColor($r('app.color.surface_color'))
-    .borderRadius(12)
+    .borderRadius(16)
+    .shadow({
+      radius: 8,
+      color: Color.Gray,
+      offsetX: 0,
+      offsetY: 2
+    })
   }
 
   /**
@@ -1061,15 +770,15 @@ struct MCPSettingsPage {
   @Builder
   buildStatisticsSection() {
     if (this.toolStatistics) {
-      Column({ space: 12 }) {
+      Column({ space: 20 }) {
         Text('工具统计')
-          .fontSize(16)
+          .fontSize(18)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .alignSelf(ItemAlign.Start)
 
         Row({ space: 16 }) {
-          Column({ space: 4 }) {
+          Column({ space: 8 }) {
             Text(`${this.toolStatistics.totalTools}`)
               .fontSize(20)
               .fontWeight(FontWeight.Bold)
@@ -1081,7 +790,7 @@ struct MCPSettingsPage {
           }
           .alignItems(HorizontalAlign.Center)
 
-          Column({ space: 4 }) {
+          Column({ space: 8 }) {
             Text(`${this.toolStatistics.enabledTools}`)
               .fontSize(20)
               .fontWeight(FontWeight.Bold)
@@ -1093,7 +802,7 @@ struct MCPSettingsPage {
           }
           .alignItems(HorizontalAlign.Center)
 
-          Column({ space: 4 }) {
+          Column({ space: 8 }) {
             Text(`${this.toolStatistics.disabledTools}`)
               .fontSize(20)
               .fontWeight(FontWeight.Bold)
@@ -1105,7 +814,7 @@ struct MCPSettingsPage {
           }
           .alignItems(HorizontalAlign.Center)
 
-          Column({ space: 4 }) {
+          Column({ space: 8 }) {
             Text(`${this.toolStatistics.totalUsage}`)
               .fontSize(20)
               .fontWeight(FontWeight.Bold)
@@ -1125,15 +834,18 @@ struct MCPSettingsPage {
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
             .alignSelf(ItemAlign.Start)
+            .margin({ top: 8 })
         }
       }
       .width('100%')
-      .padding(16)
+      .padding(24)
       .backgroundColor($r('app.color.input_background'))
-      .borderRadius(12)
-      .border({
-        width: 1,
-        color: $r('app.color.border_color')
+      .borderRadius(16)
+      .shadow({
+        radius: 4,
+        color: Color.Gray,
+        offsetX: 0,
+        offsetY: 1
       })
     }
   }
@@ -1143,53 +855,41 @@ struct MCPSettingsPage {
    */
   @Builder
   buildToolItemWithSwitch(tool: MCPTool) {
-    Column({ space: 12 }) {
+    Column({ space: 20 }) {
       Row({ space: 16 }) {
         // 左侧工具信息
-        Column({ space: 6 }) {
-          Row({ space: 8 }) {
+        Column({ space: 12 }) {
+          Row({ space: 16 }) {
             Text(tool.name)
-              .fontSize(16)
+              .fontSize(18)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-
-            // 状态指示器
-            Text(this.getToolConfig(tool.name)?.enabled ? '启用' : '禁用')
-              .fontSize(12)
-              .fontColor(this.getToolConfig(tool.name)?.enabled ? Color.White : $r('app.color.text_secondary'))
-              .backgroundColor(this.getToolConfig(tool.name)?.enabled ? '#4CAF50' : '#BDBDBD')
-              .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-              .borderRadius(10)
+              .maxLines(2)
+              .textOverflow({overflow: TextOverflow.Ellipsis})
+              .layoutWeight(1)
           }
           .alignItems(VerticalAlign.Center)
 
-          Row({ space: 12 }) {
+          Row({ space: 20 }) {
             Text(`分类: ${this.getCategoryDisplayName(this.getToolCategory(tool.name))}`)
-              .fontSize(13)
+              .fontSize(14)
               .fontColor($r('app.color.text_secondary'))
-
-            if ((this.getToolConfig(tool.name)?.usageCount ?? 0) > 0) {
-              Text(`使用次数: ${this.getToolConfig(tool.name)?.usageCount ?? 0}`)
-                .fontSize(13)
-                .fontColor($r('app.color.text_secondary'))
-            }
           }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
         // 右侧控制按钮区域
-        Column({ space: 8 }) {
+        Column({ space: 12 }) {
           // 工具开关
-          Row({ space: 8 }) {
+          Row({ space: 12 }) {
             Text('启用')
-              .fontSize(12)
+              .fontSize(14)
               .fontColor($r('app.color.text_secondary'))
 
             Toggle({ type: ToggleType.Switch, isOn: this.getToolConfig(tool.name)?.enabled ?? true })
-              .width(48)
-              .height(28)
-              .enabled(!this.isUpdatingTools)
+              .width(52)
+              .height(32)
               .onChange((isOn: boolean) => {
                 this.setToolEnabled(tool.name, isOn);
               })
@@ -1197,24 +897,26 @@ struct MCPSettingsPage {
           .alignItems(VerticalAlign.Center)
 
           // 测试按钮
-          Button(this.selectedTool?.name === tool.name ? '已选择' : '选择测试')
+          Button('测试工具')
             .type(ButtonType.Normal)
-            .backgroundColor(this.selectedTool?.name === tool.name ? $r('app.color.primary_color') : Color.Transparent)
-            .borderWidth(1)
-            .borderColor($r('app.color.primary_color'))
-            .fontColor(this.selectedTool?.name === tool.name ? Color.White : $r('app.color.primary_color'))
-            .borderRadius(6)
-            .fontSize(12)
-            .height(32)
-            .padding({ left: 12, right: 12 })
+            .backgroundColor($r('app.color.primary_color'))
+            .borderWidth(0)
+            .fontColor(Color.White)
+            .borderRadius(12)
+            .fontSize(14)
+            .height(40)
+            .padding({ left: 16, right: 16 })
             .enabled(!this.isUpdatingTools)
+            .shadow({
+              radius: 4,
+              color: Color.Gray,
+              offsetX: 0,
+              offsetY: 2
+            })
             .onClick(() => {
-              if (this.selectedTool?.name === tool.name) {
-                this.selectedTool = null;
-              } else {
-                this.selectedTool = tool;
-                this.resetParams();
-              }
+              Logger.info('MCPSettingsPage', `Test button clicked for tool: ${tool.name}`);
+              Logger.info('MCPSettingsPage', `isUpdatingTools: ${this.isUpdatingTools}`);
+              this.openToolTestDialog(tool);
             })
         }
         .alignItems(HorizontalAlign.Center)
@@ -1223,22 +925,25 @@ struct MCPSettingsPage {
 
       if (tool.description) {
         Text(tool.description)
-          .fontSize(14)
+          .fontSize(15)
           .fontColor($r('app.color.text_secondary'))
-          .lineHeight(18)
+          .lineHeight(22)
           .width('100%')
           .textAlign(TextAlign.Start)
-          .margin({ top: 8 })
+          .margin({ top: 16 })
       }
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(this.selectedTool?.name === tool.name ? $r('app.color.surface_color') : Color.White)
-    .borderRadius(12)
-    .border({
-      width: this.selectedTool?.name === tool.name ? 2 : 1,
-      color: this.selectedTool?.name === tool.name ? $r('app.color.primary_color') : $r('app.color.border_color')
+    .backgroundColor($r('app.color.surface_color'))
+    .borderRadius(16)
+    .shadow({
+      radius: 4,
+      color: Color.Gray,
+      offsetX: 0,
+      offsetY: 1
     })
+    .margin({ bottom: 8 })
   }
 
   /**
@@ -1246,5 +951,14 @@ struct MCPSettingsPage {
    */
   private getToolConfig(toolName: string): MCPToolConfig | undefined {
     return this.toolConfigs.find(config => config.name === toolName);
+  }
+
+  @Builder
+  private buildToolTestDialog(): void {
+    MCPToolTestDialog({
+      tool: this.selectedTool!,
+      localToolManager: this.localToolManager!,
+      onClose: () => this.closeToolTestDialog()
+    })
   }
 }
