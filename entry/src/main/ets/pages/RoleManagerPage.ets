@@ -8,6 +8,17 @@ import { ChatViewModel } from '../viewmodels/ChatViewModel';
 import { Constants } from '../utils/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { SessionManager } from '../utils/SessionManager';
+import { RoleManager, RoleCategory, RoleSortOption } from '../utils/RoleManager';
+
+// 扩展RoleCategory枚举添加“全部”选项
+enum ExtendedRoleCategory {
+  ALL = 'all',
+  PROFESSIONAL = 'professional',
+  CREATIVE = 'creative',
+  LIFE = 'life',
+  PSYCHOLOGY = 'psychology',
+  CUSTOM = 'custom'
+}
 
 interface RouteParams {
   fromChatPage?: boolean;
@@ -15,27 +26,40 @@ interface RouteParams {
 }
 
 /**
- * 系统提示词管理页面
+ * 角色管理页面 - 管理AI助手角色
  */
 @Entry
 @ComponentV2
-struct SystemPromptManagerPage {
-  @Local prompts: SystemPrompt[] = [];
+struct RoleManagerPage {
+  @Local roles: SystemPrompt[] = [];
+  @Local filteredRoles: SystemPrompt[] = [];
   @Local showAddDialog: boolean = false;
   @Local showEditDialog: boolean = false;
-  @Local editingPrompt: SystemPrompt | null = null;
-  @Local newPromptName: string = '';
-  @Local newPromptContent: string = '';
-  @Local editPromptName: string = '';
-  @Local editPromptContent: string = '';
+  @Local editingRole: SystemPrompt | null = null;
+  @Local newRoleName: string = '';
+  @Local newRoleContent: string = '';
+  @Local newRoleCategory: RoleCategory = RoleCategory.CUSTOM;
+  @Local newRoleIcon: string = '';
+  @Local newRoleDescription: string = '';
+  @Local editRoleName: string = '';
+  @Local editRoleContent: string = '';
+  @Local editRoleCategory: RoleCategory = RoleCategory.CUSTOM;
+  @Local editRoleIcon: string = '';
+  @Local editRoleDescription: string = '';
   @Local isDarkMode: boolean = false;
-  @Local statusBarHeight: number = 44; // 状态栏高度
-  @Local usingPromptId: string = ''; // 正在使用中的提示词ID
-  @Local isFromChatPage: boolean = false; // 是否从聊天页面跳转而来
-  @Local currentSessionId: string | null = null; // 当前会话ID
+  @Local statusBarHeight: number = 44;
+  @Local usingRoleId: string = '';
+  @Local isFromChatPage: boolean = false;
+  @Local currentSessionId: string | null = null;
+  @Local selectedCategory: ExtendedRoleCategory = ExtendedRoleCategory.ALL;
+  @Local searchQuery: string = '';
+  @Local isLoading: boolean = true;
+  @Local showSortOptions: boolean = false;
+  @Local currentSortOption: RoleSortOption = { field: 'usageCount', order: 'desc' };
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private chatViewModel: ChatViewModel = new ChatViewModel();
   private sessionManager: SessionManager = SessionManager.getInstance();
+  private roleManager: RoleManager = RoleManager.getInstance();
 
   async aboutToAppear(): Promise<void> {
     // 接收路由参数
@@ -44,7 +68,7 @@ struct SystemPromptManagerPage {
       this.isFromChatPage = !!(params.fromChatPage);
       this.currentSessionId = params.currentSessionId || null;
     }
-    Logger.info('SystemPromptManagerPage', `页面来源检测: fromChatPage=${this.isFromChatPage}, currentSessionId=${this.currentSessionId}`);
+    Logger.info('RoleManagerPage', `页面来源检测: fromChatPage=${this.isFromChatPage}, currentSessionId=${this.currentSessionId}`);
     
     // 初始化主题管理器
     await this.themeManager.initialize();
@@ -56,15 +80,15 @@ struct SystemPromptManagerPage {
     });
     
     // 暂时使用固定状态栏高度，后续动态获取
-    Logger.info('SystemPromptManagerPage', '使用固定状态栏高度44vp');
-    
-    // 加载提示词
-    await this.loadPrompts();
+    Logger.info('RoleManagerPage', '使用固定状态栏高度44vp');
+
+    // 加载角色
+    await this.loadRoles();
   }
 
   async onPageShow(): Promise<void> {
     // 页面显示时刷新数据
-    await this.loadPrompts();
+    await this.loadRoles();
   }
 
   aboutToDisappear(): void {
@@ -100,9 +124,9 @@ struct SystemPromptManagerPage {
         }
         .margin({ top: this.statusBarHeight })
 
-        // 提示词列表
-        if (this.prompts.length > 0) {
-          this.buildPromptList()
+        // 角色列表
+        if (this.roles.length > 0) {
+          this.buildRoleList()
         } else {
           this.buildEmptyState()
         }
@@ -127,14 +151,14 @@ struct SystemPromptManagerPage {
           })
       }
 
-      // 添加提示词对话框
+      // 添加角色对话框
       if (this.showAddDialog) {
-        this.buildAddPromptDialog()
+        this.buildAddRoleDialog()
       }
 
-      // 编辑提示词对话框
-      if (this.showEditDialog && this.editingPrompt) {
-        this.buildEditPromptDialog()
+      // 编辑角色对话框
+      if (this.showEditDialog && this.editingRole) {
+        this.buildEditRoleDialog()
       }
     }
     .width('100%')
@@ -167,7 +191,7 @@ struct SystemPromptManagerPage {
 
       Blank()
 
-      Text('系统提示词管理')
+      Text('角色管理')
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
@@ -192,8 +216,8 @@ struct SystemPromptManagerPage {
       })
       .onClick(() => {
         this.showAddDialog = true;
-        this.newPromptName = '';
-        this.newPromptContent = '';
+        this.newRoleName = '';
+        this.newRoleContent = '';
       })
     }
     .width('100%')
@@ -261,18 +285,18 @@ struct SystemPromptManagerPage {
   }
 
   @Builder
-  buildPromptList() {
+  buildRoleList() {
     List({ space: 16 }) {
-      ForEach(this.prompts, (prompt: SystemPrompt) => {
+      ForEach(this.filteredRoles, (role: SystemPrompt) => {
         ListItem() {
-          this.buildPromptItem(prompt)
+          this.buildRoleItem(role)
         }
         .transition({
           type: TransitionType.All,
           scale: { x: 0.95, y: 0.95 },
           opacity: 0
         })
-      }, (prompt: SystemPrompt) => `${prompt.id}_${prompt.timestamp}`)
+      }, (role: SystemPrompt) => `${role.id}_${role.timestamp}`)
     }
     .width('100%')
     .layoutWeight(1)
@@ -286,13 +310,13 @@ struct SystemPromptManagerPage {
   }
 
   @Builder
-  buildPromptItem(prompt: SystemPrompt) {
+  buildRoleItem(role: SystemPrompt) {
     Column() {
       // 内容区域
       Column() {
         // 标题行
         Row() {
-          Text(prompt.name)
+          Text(role.name)
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
@@ -302,7 +326,7 @@ struct SystemPromptManagerPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
           // 当前会话使用指示器
-          if (this.chatViewModel.getCurrentSessionSystemPrompt()?.id === prompt.id) {
+          if (this.chatViewModel.getCurrentSessionSystemPrompt()?.id === role.id) {
             Row() {
               Text('✓')
                 .fontSize(10)
@@ -325,7 +349,7 @@ struct SystemPromptManagerPage {
         .margin({ bottom: 12 })
 
         // 内容预览
-        Text(prompt.content)
+        Text(role.content)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Start)
@@ -340,7 +364,7 @@ struct SystemPromptManagerPage {
           // 使用按钮 - 占1/3宽度
           Button() {
             Row() {
-              if (this.usingPromptId === prompt.id) {
+              if (this.usingRoleId === role.id) {
                 // Loading状态
                 LoadingProgress()
                   .width(14)
@@ -365,19 +389,19 @@ struct SystemPromptManagerPage {
           }
           .height(40)
           .layoutWeight(1)
-          .backgroundColor(this.usingPromptId === prompt.id ? '#999999' : $r('app.color.primary_color'))
+          .backgroundColor(this.usingRoleId === role.id ? '#999999' : $r('app.color.primary_color'))
           .borderRadius(8)
           .shadow({
             radius: 4,
-            color: this.usingPromptId === prompt.id ? '#40999999' : $r('app.color.primary_color_20'),
+            color: this.usingRoleId === role.id ? '#40999999' : $r('app.color.primary_color_20'),
             offsetY: 1
           })
-          .enabled(this.usingPromptId === '')
+          .enabled(this.usingRoleId === '')
           .onClick(() => {
             if (this.isFromChatPage) {
-              this.applyToCurrentSession(prompt);
+              this.applyToCurrentSession(role);
             } else {
-              this.usePrompt(prompt);
+              this.useRole(role);
             }
           })
 
@@ -404,9 +428,9 @@ struct SystemPromptManagerPage {
           })
           .stateEffect(true)
           .onClick(() => {
-            this.editingPrompt = prompt;
-            this.editPromptName = prompt.name;
-            this.editPromptContent = prompt.content;
+            this.editingRole = role;
+            this.editRoleName = role.name;
+            this.editRoleContent = role.content;
             this.showEditDialog = true;
           })
 
@@ -433,7 +457,7 @@ struct SystemPromptManagerPage {
           })
           .stateEffect(true)
           .onClick(() => {
-            this.deletePrompt(prompt);
+            this.deleteRole(role);
           })
         }
         .width('100%')
@@ -466,13 +490,13 @@ struct SystemPromptManagerPage {
           .fontSize(64)
           .margin({ bottom: 16 })
         
-        Text('暂无系统提示词')
+        Text('暂无角色')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .margin({ bottom: 8 })
-        
-        Text('系统提示词可以定制AI助手的行为和风格\n让对话更符合您的需求')
+
+        Text('角色可以定制AI助手的行为和风格\n让对话更符合您的需求')
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Center)
@@ -489,7 +513,7 @@ struct SystemPromptManagerPage {
             .fontColor(Color.White)
             .fontWeight(FontWeight.Medium)
             .margin({ right: 4 })
-          Text('创建第一个提示词')
+          Text('创建第一个角色')
             .fontSize(15)
             .fontColor(Color.White)
             .fontWeight(FontWeight.Medium)
@@ -507,8 +531,8 @@ struct SystemPromptManagerPage {
       })
       .onClick(() => {
         this.showAddDialog = true;
-        this.newPromptName = '';
-        this.newPromptContent = '';
+        this.newRoleName = '';
+        this.newRoleContent = '';
       })
     }
     .width('100%')
@@ -518,15 +542,15 @@ struct SystemPromptManagerPage {
   }
 
   @Builder
-  buildAddPromptDialog() {
+  buildAddRoleDialog() {
     Column() {
       // 标题栏
       Row() {
         Text('✨')
           .fontSize(20)
           .margin({ right: 8 })
-        
-        Text('添加系统提示词')
+
+        Text('添加角色')
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
@@ -554,7 +578,7 @@ struct SystemPromptManagerPage {
         // 名称输入
         Column({ space: 8 }) {
           Row() {
-            Text('提示词名称')
+            Text('角色名称')
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
@@ -574,10 +598,10 @@ struct SystemPromptManagerPage {
             .padding({ left: 16, right: 16 })
             .border({
               width: 1,
-              color: this.newPromptName.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
+              color: this.newRoleName.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
             })
             .onChange((value: string) => {
-              this.newPromptName = value;
+              this.newRoleName = value;
             })
         }
         .alignItems(HorizontalAlign.Start)
@@ -585,7 +609,7 @@ struct SystemPromptManagerPage {
         // 内容输入
         Column({ space: 8 }) {
           Row() {
-            Text('提示词内容')
+            Text('角色内容')
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
@@ -605,10 +629,10 @@ struct SystemPromptManagerPage {
             .padding(16)
             .border({
               width: 1,
-              color: this.newPromptContent.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
+              color: this.newRoleContent.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
             })
             .onChange((value: string) => {
-              this.newPromptContent = value;
+              this.newRoleContent = value;
             })
         }
         .alignItems(HorizontalAlign.Start)
@@ -629,17 +653,17 @@ struct SystemPromptManagerPage {
             this.showAddDialog = false;
           })
 
-        Button('创建提示词')
+        Button('创建角色')
           .fontSize(16)
           .fontColor(Color.White)
-          .backgroundColor(this.newPromptName.trim().length > 0 && this.newPromptContent.trim().length > 0 ? 
+          .backgroundColor(this.newRoleName.trim().length > 0 && this.newRoleContent.trim().length > 0 ? 
             $r('app.color.primary_color') : $r('app.color.border_color'))
           .borderRadius(12)
           .height(44)
           .layoutWeight(1)
-          .enabled(this.newPromptName.trim().length > 0 && this.newPromptContent.trim().length > 0)
+          .enabled(this.newRoleName.trim().length > 0 && this.newRoleContent.trim().length > 0)
           .onClick(() => {
-            this.addPrompt();
+            this.addRole();
           })
       }
       .width('100%')
@@ -661,7 +685,7 @@ struct SystemPromptManagerPage {
   }
 
   @Builder
-  buildEditPromptDialog() {
+  buildEditRoleDialog() {
     Column() {
       // 标题栏
       Row() {
@@ -669,7 +693,7 @@ struct SystemPromptManagerPage {
           .fontSize(20)
           .margin({ right: 8 })
         
-        Text('编辑系统提示词')
+        Text('编辑角色')
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
@@ -697,7 +721,7 @@ struct SystemPromptManagerPage {
         // 名称输入
         Column({ space: 8 }) {
           Row() {
-            Text('提示词名称')
+            Text('角色名称')
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
@@ -709,7 +733,7 @@ struct SystemPromptManagerPage {
           }
           .alignItems(VerticalAlign.Center)
           
-          TextInput({ placeholder: '请输入提示词名称', text: this.editPromptName })
+          TextInput({ placeholder: '请输入角色名称', text: this.editRoleName })
             .width('100%')
             .height(48)
             .backgroundColor($r('app.color.input_background'))
@@ -717,10 +741,10 @@ struct SystemPromptManagerPage {
             .padding({ left: 16, right: 16 })
             .border({
               width: 1,
-              color: this.editPromptName.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
+              color: this.editRoleName.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
             })
             .onChange((value: string) => {
-              this.editPromptName = value;
+              this.editRoleName = value;
             })
         }
         .alignItems(HorizontalAlign.Start)
@@ -728,7 +752,7 @@ struct SystemPromptManagerPage {
         // 内容输入
         Column({ space: 8 }) {
           Row() {
-            Text('提示词内容')
+            Text('角色内容')
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
@@ -740,7 +764,7 @@ struct SystemPromptManagerPage {
           }
           .alignItems(VerticalAlign.Center)
           
-          TextArea({ placeholder: '请输入提示词内容', text: this.editPromptContent })
+          TextArea({ placeholder: '请输入角色内容', text: this.editRoleContent })
             .width('100%')
             .height(140)
             .backgroundColor($r('app.color.input_background'))
@@ -748,10 +772,10 @@ struct SystemPromptManagerPage {
             .padding(16)
             .border({
               width: 1,
-              color: this.editPromptContent.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
+              color: this.editRoleContent.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
             })
             .onChange((value: string) => {
-              this.editPromptContent = value;
+              this.editRoleContent = value;
             })
         }
         .alignItems(HorizontalAlign.Start)
@@ -775,14 +799,14 @@ struct SystemPromptManagerPage {
         Button('保存更改')
           .fontSize(16)
           .fontColor(Color.White)
-          .backgroundColor(this.editPromptName.trim().length > 0 && this.editPromptContent.trim().length > 0 ? 
+          .backgroundColor(this.editRoleName.trim().length > 0 && this.editRoleContent.trim().length > 0 ? 
             $r('app.color.primary_color') : $r('app.color.border_color'))
           .borderRadius(12)
           .height(44)
           .layoutWeight(1)
-          .enabled(this.editPromptName.trim().length > 0 && this.editPromptContent.trim().length > 0)
+          .enabled(this.editRoleName.trim().length > 0 && this.editRoleContent.trim().length > 0)
           .onClick(() => {
-            this.updatePrompt();
+            this.updateRole();
           })
       }
       .width('100%')
@@ -803,26 +827,26 @@ struct SystemPromptManagerPage {
     })
   }
 
-  private async usePrompt(prompt: SystemPrompt): Promise<void> {
+  private async useRole(role: SystemPrompt): Promise<void> {
     try {
       // 设置loading状态
-      this.usingPromptId = prompt.id;
-      
-      Logger.info('SystemPromptManagerPage', `开始使用提示词创建新会话: ${prompt.name}`);
+      this.usingRoleId = role.id;
+
+      Logger.info('RoleManagerPage', `开始使用角色创建新会话: ${role.name}`);
 
       // 显示toast提示
       promptAction.showToast({
-        message: `正在使用"${prompt.name}"创建新会话...`,
+        message: `正在使用"${role.name}"创建新会话...`,
         duration: 2000
       });
 
-      const sessionManager = SessionManager.getInstance();
-      const newSessionId = await sessionManager.createSessionFromPrompt(prompt);
+      // 使用SessionManager创建角色会话
+      const newSession = await this.sessionManager.createRoleSession(role);
 
-      Logger.info('SystemPromptManagerPage', `新会话创建成功: ${newSessionId}，准备跳转...`);
+      Logger.info('RoleManagerPage', `新会话创建成功: ${newSession.id}，准备跳转...`);
 
       // 清除loading状态
-      this.usingPromptId = '';
+      this.usingRoleId = '';
 
       // 显示成功提示
       promptAction.showToast({
@@ -834,19 +858,19 @@ struct SystemPromptManagerPage {
       setTimeout(() => {
         router.pushUrl({
           url: 'pages/ChatPage',
-          params: { sessionId: newSessionId }
+          params: { sessionId: newSession.id }
         }).then(() => {
-          Logger.info('SystemPromptManagerPage', '成功跳转到聊天页面');
+          Logger.info('RoleManagerPage', '成功跳转到聊天页面');
         }).catch((error: Error) => {
-          Logger.error('SystemPromptManagerPage', `跳转失败: ${error.message}`);
+          Logger.error('RoleManagerPage', `跳转失败: ${error.message}`);
         });
       }, 300);
 
     } catch (error) {
       // 清除loading状态
-      this.usingPromptId = '';
-      
-      Logger.error('SystemPromptManagerPage', `使用提示词创建会话失败: ${error}`);
+      this.usingRoleId = '';
+
+      Logger.error('RoleManagerPage', `使用角色创建会话失败: ${error}`);
       promptAction.showToast({
         message: `创建失败: ${(error as Error).message}`,
         duration: 3000
@@ -857,16 +881,16 @@ struct SystemPromptManagerPage {
   /**
    * 应用提示词到当前会话
    */
-  private async applyToCurrentSession(prompt: SystemPrompt): Promise<void> {
+  private async applyToCurrentSession(role: SystemPrompt): Promise<void> {
     try {
       // 设置loading状态
-      this.usingPromptId = prompt.id;
-      
-      Logger.info('SystemPromptManagerPage', `开始应用提示词到当前会话: ${prompt.name}`);
+      this.usingRoleId = role.id;
+
+      Logger.info('RoleManagerPage', `开始应用角色到当前会话: ${role.name}`);
 
       // 显示toast提示
       promptAction.showToast({
-        message: `正在应用"${prompt.name}"到当前会话...`,
+        message: `正在应用"${role.name}"到当前会话...`,
         duration: 2000
       });
 
@@ -876,16 +900,16 @@ struct SystemPromptManagerPage {
       }
 
       // 使用 SessionManager 更新会话的系统提示词
-      await this.sessionManager.updateSessionPrompt(this.currentSessionId, prompt.id);
+      await this.sessionManager.updateSessionPrompt(this.currentSessionId, role.id);
 
-      Logger.info('SystemPromptManagerPage', `系统提示词已应用到会话: ${this.currentSessionId}`);
+      Logger.info('RoleManagerPage', `角色已应用到会话: ${this.currentSessionId}`);
 
       // 清除loading状态
-      this.usingPromptId = '';
+      this.usingRoleId = '';
 
       // 显示成功提示
       promptAction.showToast({
-        message: '系统提示词应用成功！',
+        message: '角色应用成功！',
         duration: 1500
       });
 
@@ -896,9 +920,9 @@ struct SystemPromptManagerPage {
 
     } catch (error) {
       // 清除loading状态
-      this.usingPromptId = '';
-      
-      Logger.error('SystemPromptManagerPage', `应用提示词到当前会话失败: ${error}`);
+      this.usingRoleId = '';
+
+      Logger.error('RoleManagerPage', `应用角色到当前会话失败: ${error}`);
       promptAction.showToast({
         message: `应用失败: ${(error as Error).message}`,
         duration: 3000
@@ -907,63 +931,91 @@ struct SystemPromptManagerPage {
   }
 
 
-  private async loadPrompts(): Promise<void> {
+  private async loadRoles(): Promise<void> {
     try {
-      Logger.info('SystemPromptManagerPage', '开始加载提示词');
-      
-      // 加载所有提示词
-      const loadedPrompts = await AppStorage.getSystemPrompts();
-      Logger.info('SystemPromptManagerPage', `从AppStorage加载了 ${loadedPrompts.length} 条系统提示词`);
-      
+      Logger.info('RoleManagerPage', '开始加载角色');
+
+      // 使用RoleManager加载所有角色
+      const loadedRoles = await this.roleManager.getAllRoles();
+      Logger.info('RoleManagerPage', `从RoleManager加载了 ${loadedRoles.length} 个角色`);
+
       // 强制触发UI更新 - 使用扩展运算符创建新数组
-      this.prompts = [...loadedPrompts];
-      Logger.info('SystemPromptManagerPage', `UI状态已更新，当前显示 ${this.prompts.length} 条提示词`);
-      
-      Logger.info('SystemPromptManagerPage', '提示词加载完成');
+      this.roles = [...loadedRoles];
+
+      // 应用筛选和排序
+      await this.applyFiltersAndSort();
+
+      Logger.info('RoleManagerPage', '角色加载完成');
     } catch (error) {
-      Logger.error('SystemPromptManagerPage', `加载提示词失败: ${(error as Error).message}`);
-      Logger.error('SystemPromptManagerPage', `错误堆栈: ${(error as Error).stack}`);
+      Logger.error('RoleManagerPage', `加载角色失败: ${(error as Error).message}`);
+    }
+  }
+
+  private async applyFiltersAndSort(): Promise<void> {
+    try {
+      let filtered = this.roles;
+
+      // 按分类筛选
+      if (this.selectedCategory !== ExtendedRoleCategory.ALL) {
+        filtered = filtered.filter(role => role.roleCategory === this.selectedCategory);
+      }
+
+      // 按搜索查询筛选
+      if (this.searchQuery.trim()) {
+        const query = this.searchQuery.toLowerCase().trim();
+        filtered = filtered.filter(role =>
+          role.name.toLowerCase().includes(query) ||
+          role.content.toLowerCase().includes(query) ||
+          (role.roleDescription && role.roleDescription.toLowerCase().includes(query))
+        );
+      }
+
+      // 应用排序
+      this.filteredRoles = this.roleManager.sortRoles(filtered, this.currentSortOption);
+
+      Logger.debug('RoleManagerPage', `筛选排序后: ${this.filteredRoles.length} 个角色`);
+    } catch (error) {
+      Logger.error('RoleManagerPage', `筛选排序失败: ${error}`);
+      this.filteredRoles = [...this.roles];
     }
   }
 
 
 
   
-  private async addPrompt(): Promise<void> {
+  private async addRole(): Promise<void> {
     try {
-      Logger.info('SystemPromptManagerPage', `开始添加提示词: ${this.newPromptName.trim()}`);
-      
-      const newPrompt: SystemPrompt = new SystemPrompt(
-        this.newPromptName.trim(),
-        this.newPromptContent.trim(),
-        ''
+      Logger.info('RoleManagerPage', `开始添加角色: ${this.newRoleName.trim()}`);
+
+      // 使用RoleManager创建角色
+      const newRole = await this.roleManager.createRole(
+        this.newRoleName.trim(),
+        this.newRoleContent.trim(),
+        RoleCategory.CUSTOM,
+        '', // 使用默认图标
+        this.newRoleName.trim() // 使用名称作为描述
       );
-      
-      Logger.debug('SystemPromptManagerPage', `新提示词对象: ${JSON.stringify(newPrompt)}`);
-      
-      await AppStorage.addSystemPrompt(newPrompt);
-      Logger.info('SystemPromptManagerPage', '提示词已保存到存储，准备重新加载');
-      
+
+      Logger.info('RoleManagerPage', `角色已创建: ${newRole.id}`);
+
       // 关闭对话框并清空输入
       this.showAddDialog = false;
-      this.newPromptName = '';
-      this.newPromptContent = '';
-      
-      // 强制清空并重新加载数据，确保UI更新
-      this.prompts = []; // 先清空
-      await this.loadPrompts(); // 再重新加载
-      
-      Logger.debug('SystemPromptManagerPage', '对话框状态已重置');
-      
+      this.newRoleName = '';
+      this.newRoleContent = '';
+
+      // 重新加载数据
+      await this.loadRoles();
+
+      Logger.debug('RoleManagerPage', '对话框状态已重置');
+
       promptAction.showToast({
         message: '添加成功',
         duration: 1500
       });
-      
-      Logger.info('SystemPromptManagerPage', '提示词添加完成');
+
+      Logger.info('RoleManagerPage', '角色添加完成');
     } catch (error) {
-      Logger.error('SystemPromptManagerPage', `添加提示词失败: ${(error as Error).message}`);
-      Logger.error('SystemPromptManagerPage', `错误堆栈: ${(error as Error).stack}`);
+      Logger.error('RoleManagerPage', `添加角色失败: ${(error as Error).message}`);
       promptAction.showToast({
         message: '添加失败',
         duration: 1500
@@ -971,46 +1023,40 @@ struct SystemPromptManagerPage {
     }
   }
 
-  private async updatePrompt(): Promise<void> {
+  private async updateRole(): Promise<void> {
     try {
-      if (this.editingPrompt) {
-        console.info('=== 开始更新提示词 ===');
-        console.info(`更新提示词 ID: ${this.editingPrompt.id}`);
-        console.info(`新名称: ${this.editPromptName.trim()}`);
-        console.info(`新内容长度: ${this.editPromptContent.trim().length}`);
-        
-        // 创建更新后的提示词对象
-        const updatedPrompt: SystemPrompt = new SystemPrompt(
-          this.editPromptName.trim(),
-          this.editPromptContent.trim(),
-          ''
-        );
-        updatedPrompt.id = this.editingPrompt.id;
-        updatedPrompt.timestamp = Date.now();
-        
-        Logger.debug('SystemPromptManagerPage', `更新后的提示词对象: ${JSON.stringify(updatedPrompt)}`);
-        
-        await AppStorage.updateSystemPrompt(updatedPrompt);
-        Logger.info('SystemPromptManagerPage', '提示词已更新到存储，准备重新加载');
-        
+      if (this.editingRole) {
+        Logger.info('RoleManagerPage', `开始更新角色: ${this.editingRole.id}`);
+        Logger.info('RoleManagerPage', `新名称: ${this.editRoleName.trim()}`);
+        Logger.info('RoleManagerPage', `新内容长度: ${this.editRoleContent.trim().length}`);
+
+        // 更新角色信息
+        this.editingRole.name = this.editRoleName.trim();
+        this.editingRole.content = this.editRoleContent.trim();
+        this.editingRole.timestamp = Date.now();
+
+        Logger.debug('RoleManagerPage', `更新后的角色对象: ${JSON.stringify(this.editingRole)}`);
+
+        // 使用RoleManager更新角色
+        await this.roleManager.updateRole(this.editingRole);
+        Logger.info('RoleManagerPage', '角色已更新到存储，准备重新加载');
+
         // 关闭编辑对话框
         this.showEditDialog = false;
-        this.editingPrompt = null;
-        
-        // 强制清空并重新加载数据，确保UI更新
-        this.prompts = []; // 先清空
-        await this.loadPrompts(); // 再重新加载
-        
+        this.editingRole = null;
+
+        // 重新加载数据
+        await this.loadRoles();
+
         promptAction.showToast({
           message: '更新成功',
           duration: 1500
         });
-        
-        Logger.info('SystemPromptManagerPage', '提示词更新完成');
+
+        Logger.info('RoleManagerPage', '角色更新完成');
       }
     } catch (error) {
-      Logger.error('SystemPromptManagerPage', `更新提示词失败: ${(error as Error).message}`);
-      Logger.error('SystemPromptManagerPage', `错误堆栈: ${(error as Error).stack}`);
+      Logger.error('RoleManagerPage', `更新角色失败: ${(error as Error).message}`);
       promptAction.showToast({
         message: '更新失败',
         duration: 1500
@@ -1019,32 +1065,31 @@ struct SystemPromptManagerPage {
   }
 
 
-  private async deletePrompt(prompt: SystemPrompt): Promise<void> {
+  private async deleteRole(role: SystemPrompt): Promise<void> {
     AlertDialog.show({
       title: '确认删除',
-      message: `确定要删除提示词"${prompt.name}"吗？此操作不可撤销。`,
+      message: `确定要删除角色"${role.name}"吗？此操作不可撤销。`,
       primaryButton: {
         value: '确定',
         action: async () => {
           try {
-            Logger.info('SystemPromptManagerPage', `开始删除提示词: ${prompt.name}`);
-            
-            await AppStorage.deleteSystemPrompt(prompt.id);
-            Logger.info('SystemPromptManagerPage', '提示词已从存储删除，准备重新加载');
-            
-            // 强制清空并重新加载数据，确保UI更新
-            this.prompts = []; // 先清空
-            await this.loadPrompts(); // 再重新加载
-            
+            Logger.info('RoleManagerPage', `开始删除角色: ${role.name}`);
+
+            // 使用RoleManager删除角色
+            await this.roleManager.deleteRole(role.id);
+            Logger.info('RoleManagerPage', '角色已从存储删除，准备重新加载');
+
+            // 重新加载数据
+            await this.loadRoles();
+
             promptAction.showToast({
               message: '删除成功',
               duration: 1500
             });
-            
-            Logger.info('SystemPromptManagerPage', '提示词删除完成');
+
+            Logger.info('RoleManagerPage', '角色删除完成');
           } catch (error) {
-            Logger.error('SystemPromptManagerPage', `删除提示词失败: ${(error as Error).message}`);
-            Logger.error('SystemPromptManagerPage', `错误堆栈: ${(error as Error).stack}`);
+            Logger.error('RoleManagerPage', `删除角色失败: ${(error as Error).message}`);
             promptAction.showToast({
               message: '删除失败',
               duration: 1500

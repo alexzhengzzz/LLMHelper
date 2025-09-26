@@ -80,7 +80,7 @@ export class SessionManager {
   async createNewSessionWithPrompt(systemPromptId: string | null, firstMessage?: string): Promise<Session> {
     try {
       Logger.info('SessionManager', `创建新会话，系统提示词ID: ${systemPromptId || '无'}`);
-      
+
       // 检查会话数量限制
       const existingSessions = await this.getSessions();
       if (existingSessions.length >= this.MAX_SESSIONS) {
@@ -88,26 +88,43 @@ export class SessionManager {
         throw Error(`会话数量已达上限 ${this.MAX_SESSIONS} 个`);
       }
 
-      // 生成会话名称
+      // 获取系统提示词信息，判断是否为角色
+      let roleId: string | undefined;
       let sessionName: string;
+
+      if (systemPromptId) {
+        const prompts = await AppStorage.getSystemPrompts();
+        const prompt = prompts.find(p => p.id === systemPromptId);
+        if (prompt && prompt.isRole) {
+          roleId = systemPromptId; // 如果是角色，设置roleId
+        }
+      }
+
+      // 生成会话名称
       if (firstMessage && firstMessage.trim()) {
-        sessionName = Session.generateSessionName(firstMessage);
+        const prompt = systemPromptId ? await this.getSystemPromptById(systemPromptId) : null;
+        sessionName = Session.generateSessionName(firstMessage, prompt || undefined);
       } else {
-        // 如果没有首条消息，使用临时名称（后续会根据首条消息更新）
+        // 如果没有首条消息，使用临时名称
         if (systemPromptId) {
-          sessionName = '新对话'; // 临时名称，首条消息后会更新为 [提示词关键词] 实际内容
+          const prompt = await this.getSystemPromptById(systemPromptId);
+          if (prompt && prompt.isRole) {
+            sessionName = `与"${prompt.name}"的对话`;
+          } else {
+            sessionName = '新对话'; // 临时名称，首条消息后会更新
+          }
         } else {
           sessionName = `新对话 ${existingSessions.length + 1}`;
         }
       }
 
-      // 创建新会话（传入系统提示词ID）
-      const session = new Session(sessionName, systemPromptId);
-      Logger.info('SessionManager', `创建新会话: ${session.id} - ${session.name}, 提示词ID: ${systemPromptId || '无'}`);
+      // 创建新会话（传入系统提示词ID和角色ID）
+      const session = new Session(sessionName, systemPromptId, roleId);
+      Logger.info('SessionManager', `创建新会话: ${session.id} - ${session.name}, 提示词ID: ${systemPromptId || '无'}, 角色ID: ${roleId || '无'}`);
 
       // 保存会话
       await AppStorage.saveSession(session);
-      
+
       // 设置为当前会话
       await this.setCurrentSession(session.id);
 
@@ -181,9 +198,9 @@ export class SessionManager {
         sessionName = `与"${role.name}"的对话`;
       }
 
-      // 创建新会话并绑定角色ID
-      const session = new Session(sessionName, role.id);
-      Logger.info('SessionManager', `创建角色会话: ${session.id} - ${session.name}, 角色ID: ${role.id}`);
+      // 创建新会话并绑定角色ID（同时设置systemPromptId和roleId）
+      const session = new Session(sessionName, role.id, role.id);
+      Logger.info('SessionManager', `创建角色会话: ${session.id} - ${session.name}, systemPromptId: ${role.id}, roleId: ${role.id}`);
 
       // 保存会话
       await AppStorage.saveSession(session);
@@ -201,21 +218,41 @@ export class SessionManager {
   }
 
   /**
+   * 根据ID获取系统提示词
+   */
+  private async getSystemPromptById(promptId: string): Promise<SystemPrompt | null> {
+    try {
+      const prompts = await AppStorage.getSystemPrompts();
+      const prompt = prompts.find(p => p.id === promptId);
+      return prompt || null;
+    } catch (error) {
+      Logger.error('SessionManager', `获取系统提示词失败: ${error}`);
+      return null;
+    }
+  }
+
+  /**
    * 获取会话绑定的角色信息
    */
   async getSessionRole(sessionId: string): Promise<SystemPrompt | null> {
     try {
       const session = (await this.getSessions()).find(s => s.id === sessionId);
-      if (!session || !session.systemPromptId) {
+      if (!session) {
+        return null;
+      }
+
+      // 优先使用roleId，如果没有则使用systemPromptId
+      const roleId = session.roleId || session.systemPromptId;
+      if (!roleId) {
         return null;
       }
 
       // 获取所有系统提示词
       const prompts = await AppStorage.getSystemPrompts();
-      const role = prompts.find(p => p.id === session.systemPromptId && p.isRole);
+      const role = prompts.find(p => p.id === roleId && p.isRole);
 
       if (role) {
-        Logger.debug('SessionManager', `获取会话角色: ${sessionId} -> ${role.name}`);
+        Logger.debug('SessionManager', `获取会话角色: ${sessionId} -> ${role.name} (使用${session.roleId ? 'roleId' : 'systemPromptId'})`);
         return role;
       }
 
@@ -242,10 +279,23 @@ export class SessionManager {
         }
       }
 
-      // 更新会话的系统提示词
-      await this.updateSessionPrompt(sessionId, newRoleId);
+      // 获取会话
+      const sessions = await this.getSessions();
+      const session = sessions.find(s => s.id === sessionId);
 
-      Logger.info('SessionManager', `会话角色切换成功: ${sessionId}`);
+      if (!session) {
+        throw Error('会话不存在');
+      }
+
+      // 更新会话的系统提示词ID和角色ID
+      session.systemPromptId = newRoleId;
+      session.roleId = newRoleId || undefined; // 如果为null则设置为undefined
+      session.updatedAt = Date.now();
+
+      // 保存更新
+      await AppStorage.saveSession(session);
+
+      Logger.info('SessionManager', `会话角色切换成功: ${sessionId} (systemPromptId: ${newRoleId}, roleId: ${session.roleId || '无'})`);
     } catch (error) {
       Logger.error('SessionManager', `切换会话角色失败: ${error}`);
       throw error as Error;
@@ -258,7 +308,8 @@ export class SessionManager {
   async getSessionsByRole(roleId: string): Promise<Session[]> {
     try {
       const sessions = await this.getSessions();
-      const roleSessions = sessions.filter(s => s.systemPromptId === roleId);
+      // 同时检查roleId和systemPromptId，确保兼容性
+      const roleSessions = sessions.filter(s => s.roleId === roleId || s.systemPromptId === roleId);
 
       Logger.debug('SessionManager', `获取角色 ${roleId} 的会话: ${roleSessions.length} 个`);
       return roleSessions;
@@ -454,38 +505,60 @@ export class SessionManager {
   }
 
   /**
-   * 数据迁移：为旧会话添加systemPromptId字段
+   * 数据迁移：为旧会话添加systemPromptId和roleId字段
    */
   private async migrateSessionsData(sessions: Session[]): Promise<void> {
     try {
       let needsMigration = false;
-      
+
       // 检查是否需要迁移
       for (const session of sessions) {
-        if (session.systemPromptId === undefined) {
+        if (session.systemPromptId === undefined || session.roleId === undefined) {
           needsMigration = true;
           break;
         }
       }
-      
+
       if (!needsMigration) {
         Logger.debug('SessionManager', '会话数据已是最新格式，无需迁移');
         return;
       }
-      
+
       Logger.info('SessionManager', `开始迁移会话数据，共 ${sessions.length} 个会话`);
-      
-      // 为每个会话设置默认的systemPromptId（null表示无系统提示词）
+
+      // 为每个会话设置默认字段
       for (const session of sessions) {
+        let migrated = false;
+
+        // 迁移systemPromptId
         if (session.systemPromptId === undefined) {
-          session.systemPromptId = null; // 设置为null，表示未绑定系统提示词
+          session.systemPromptId = null;
+          migrated = true;
+        }
+
+        // 迁移roleId - 如果有systemPromptId且对应的提示词是角色，则设置roleId
+        if (session.roleId === undefined && session.systemPromptId) {
+          const prompts = await AppStorage.getSystemPrompts();
+          const prompt = prompts.find(p => p.id === session.systemPromptId);
+          if (prompt && prompt.isRole) {
+            session.roleId = session.systemPromptId; // 设置roleId为角色ID
+          } else {
+            session.roleId = undefined; // 非角色会话不设置roleId
+          }
+          migrated = true;
+        } else if (session.roleId === undefined) {
+          session.roleId = undefined; // 明确设置为undefined
+          migrated = true;
+        }
+
+        if (migrated) {
           await AppStorage.saveSession(session);
-          Logger.debug('SessionManager', `迁移会话: ${session.id} -> systemPromptId: null`);
+          Logger.debug('SessionManager', `迁移会话: ${session.id} -> systemPromptId: ${session.systemPromptId}, roleId: ${session.roleId || '无'}`);
         }
       }
-      
+
       Logger.info('SessionManager', '会话数据迁移完成');
-      
+
     } catch (error) {
       Logger.error('SessionManager', `会话数据迁移失败: ${error}`);
     }

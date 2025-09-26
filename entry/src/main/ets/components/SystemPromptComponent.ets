@@ -105,7 +105,7 @@ export struct SystemPromptComponent {
           // 跳转到管理页面
           setTimeout(() => {
             router.pushUrl({ 
-              url: 'pages/SystemPromptManagerPage',
+              url: 'pages/RoleManagerPage',
               params: { fromSystemPromptComponent: true }
             });
           }, 100);

@@ -1,6 +1,6 @@
 import { SystemPrompt } from '../models/ChatModels';
 import { RoleCardComponent } from './RoleCardComponent';
-import { AppStorage } from '../utils/AppStorage';
+import { RoleManager, RoleCategory } from '../utils/RoleManager';
 import { Logger } from '../utils/Logger';
 import { COMMON_CONSTANTS } from '../utils/Constants';
 
@@ -30,6 +30,7 @@ export struct RoleViewComponent {
   @Local selectedCategory: string = 'all';
   @Local isLoading: boolean = true;
   @Local isDarkMode: boolean = false;
+  private roleManager: RoleManager = RoleManager.getInstance();
 
   // 分类选项
   private readonly categories: CategoryItem[] = [
@@ -57,7 +58,11 @@ export struct RoleViewComponent {
       this.isLoading = true;
       Logger.info('RoleViewComponent', '开始加载角色数据');
 
-      Logger.info('RoleViewComponent', '角色数据加载完成');
+      // 使用RoleManager加载角色
+      const loadedRoles = await this.roleManager.getAllRoles();
+      this.roles = loadedRoles;
+
+      Logger.info('RoleViewComponent', `角色数据加载完成，共 ${loadedRoles.length} 个角色`);
     } catch (error) {
       Logger.error('RoleViewComponent', `加载角色数据失败: ${error}`);
       this.roles = [];
@@ -105,29 +110,6 @@ export struct RoleViewComponent {
   
   build() {
     Column() {
-      // 标题
-      Row() {
-        Text('AI 角色助手')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.isDarkMode ? '#FFFFFF' : '#333333')
-          .layoutWeight(1);
-
-        // 刷新按钮
-        Button('🔄')
-          .fontSize(16)
-          .backgroundColor(Color.Transparent)
-          .fontColor(this.isDarkMode ? '#CCCCCC' : '#666666')
-          .borderRadius(16)
-          .width(32)
-          .height(32)
-          .onClick(() => {
-            this.loadRoles();
-          });
-      }
-      .width('100%')
-      .margin({ bottom: 16 });
-
       // 分类选择器
       Row() {
         Scroll() {

@@ -15,8 +15,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 **Key Architecture:**
 - **Technology**: HarmonyOS app using ArkTS V2 with MVVM architecture
-- **Backend API**: Connects to Go server at YOUR_SERVER_IP:8080
-- **Core Services**: 13 service classes handling API, WebSocket, voice, AI logic
+- **Backend API**: Connects to Go server at YOUR_SERVER_IP:8080 (production)
+- **Core Services**: 17 service classes handling API, WebSocket, voice, AI logic, MCP tools
 
 # Javis - HarmonyOS AI编程助手客户端
 
@@ -39,6 +39,7 @@ Javis 是一款基于鸿蒙系统的智能AI编程助手应用，通过集成多
 - **生产环境**: `YOUR_SERVER_IP:8080`
 - **主要接口**: `/api/chat`, `/api/execute`, `/api/search`
 - **实时通信**: WebSocket支持流式响应
+- **MCP工具**: 支持Calculator、AppLauncher、WeatherService等本地工具
 
 ## 🛠️ 开发工作流
 
@@ -59,10 +60,14 @@ Javis 是一款基于鸿蒙系统的智能AI编程助手应用，通过集成多
 ```
 entry/src/main/ets/
 ├── pages/                    # 页面
-│   ├── ChatPage.ets         # 主聊天页面
-│   ├── SettingsPage.ets     # 设置页面
-│   ├── SystemPromptManagerPage.ets # 系统提示词管理
-│   └── APIKeyManagerPage.ets # API密钥管理
+│   ├── ChatPage.ets                 # 主聊天页面
+│   ├── SettingsPage.ets             # 设置页面
+│   ├── MCPSettingsPage.ets          # MCP工具设置页面
+│   ├── ServerSettingsPage.ets       # 服务器设置页面
+│   ├── UserProfileEditPage.ets      # 用户配置编辑页面
+│   ├── APIKeyManagerPage.ets        # API密钥管理页面
+│   ├── RoleManagerPage.ets          # 角色管理页面
+│   └── SystemPromptManagerPage.ets  # 系统提示词管理
 ├── components/              # UI组件
 │   ├── ModelSelectorComponent.ets    # 模型选择器
 │   ├── VoiceInputComponent.ets       # 语音输入
@@ -74,7 +79,17 @@ entry/src/main/ets/
 │   ├── SwipeableSessionItemComponent.ets # 滑动会话项
 │   ├── SystemPromptComponent.ets     # 系统提示词
 │   ├── NewSessionDialogComponent.ets # 新建会话对话框
-│   └── LoadingComponent.ets          # 加载组件
+│   ├── HybridActionComponent.ets     # 混合操作组件
+│   ├── MCPToolsComponent.ets         # MCP工具组件
+│   ├── RoleCardComponent.ets         # 角色卡片组件
+│   ├── RoleViewComponent.ets         # 角色视图组件
+│   ├── DeepThinkingIndicator.ets    # 深度思考指示器
+│   ├── DeepThinkingStatusCard.ets   # 深度思考状态卡片
+│   ├── ThinkingProcessComponent.ets  # 思考过程组件
+│   ├── ThinkingProgressComponent.ets # 思考进度组件
+│   ├── SearchDetailsDialog.ets       # 搜索详情对话框
+│   ├── ToolCallStatusComponent.ets  # 工具调用状态组件
+│   └── MCPToolTestDialog.ets        # MCP工具测试对话框
 ├── services/                # 服务层
 │   ├── APIManager.ets               # API管理器 (双API模式支持)
 │   ├── WebSocketService.ets         # WebSocket服务
@@ -86,12 +101,19 @@ entry/src/main/ets/
 │   ├── MessageEnhancer.ets          # 消息增强服务
 │   ├── SearchDecisionEngine.ets     # 搜索决策引擎
 │   ├── DirectAPIService.ets         # 直连API服务
-│   └── ApiService.ets               # 基础API服务
+│   ├── ApiService.ets               # 基础API服务
+│   ├── MCPClientManager.ets         # MCP客户端管理器
+│   ├── LocalToolManager.ets         # 本地工具管理器
+│   ├── CalculatorTool.ets            # 计算器工具
+│   ├── AppLauncherTool.ets          # 应用启动工具
+│   ├── WeatherServiceTool.ets       # 天气服务工具
+│   ├── AudioCapturer.ets             # 音频捕获
+│   └── ContentCompressor.ets        # 内容压缩器
 ├── clients/                 # API客户端
 │   ├── BaseAPIClient.ets            # 基础客户端
 │   ├── SiliconFlowClient.ets        # 硅基流动客户端
-│   ├── GeminiClient.ets             # Gemini客户端
-│   └── GLMClient.ets                # GLM客户端
+│   ├── GLMClient.ets                # GLM客户端
+│   └── SearchAPIClient.ets          # 搜索API客户端
 ├── utils/                   # 工具类
 │   ├── ThemeManager.ets             # 主题管理器
 │   ├── SystemPromptManager.ets      # 系统提示词管理
@@ -99,22 +121,33 @@ entry/src/main/ets/
 │   ├── AppStorage.ets               # 应用存储
 │   ├── UserProfileManager.ets       # 用户配置管理
 │   ├── Constants.ets                # 常量定义
-│   └── Logger.ets                   # 日志系统
+│   ├── Logger.ets                   # 日志系统
+│   ├── AIServiceStateManager.ets    # AI服务状态管理器
+│   ├── ErrorManager.ets              # 错误管理器
+│   ├── FontManager.ets               # 字体管理器
+│   ├── AdaptiveTimeoutManager.ets    # 自适应超时管理器
+│   ├── NetworkRequestOptimizer.ets  # 网络请求优化器
+│   ├── HTTPConnectionPool.ets       # HTTP连接池
+│   ├── RequestDeduplicator.ets      # 请求去重器
+│   ├── APIKeyManager.ets            # API密钥管理器
+│   ├── ServerConfigManager.ets      # 服务器配置管理器
+│   ├── AppConfigManager.ets         # 应用配置管理器
+│   ├── PromptRecommendationManager.ets # 提示词推荐管理器
+│   └── RoleManager.ets              # 角色管理器
 ├── animations/              # 动画系统
 │   ├── index.ets                    # 动画系统入口
-│   ├── AnimationManager.ets         # 动画管理器
-│   ├── BasicAnimations.ets          # 基础动画
-│   ├── StateAnimations.ets          # 状态动画
-│   ├── VoiceAnimations.ets          # 语音动画
-│   ├── TransitionAnimations.ets     # 转场动画
-│   └── InteractionAnimations.ets    # 交互动画
+│   └── BasicAnimations.ets          # 基础动画
 ├── viewmodels/              # 视图模型
 │   └── ChatViewModel.ets            # 聊天视图模型
 ├── models/                  # 数据模型
 │   └── ChatModels.ets               # 聊天模型定义
 ├── types/                   # 类型定义
 │   ├── APITypes.ets                 # API类型定义
-│   └── ToolboxTypes.ets             # 工具箱类型定义
+│   ├── ToolboxTypes.ets             # 工具箱类型定义
+│   ├── MCPTypes.ets                 # MCP类型定义
+│   ├── APIKeyTypes.ets              # API密钥类型定义
+│   ├── ErrorTypes.ets               # 错误类型定义
+│   └── AIServiceStateTypes.ets      # AI服务状态类型定义
 └── entryability/            # 应用入口
     └── EntryAbility.ets             # 主入口
 ```
@@ -243,9 +276,10 @@ entry/src/main/ets/
 详细开发范式请参考：`MCP.md`
 
 ## 📊 HarmonyOS客户端统计
-- **源代码**: 65个ArkTS文件，约28,852行代码
-- **测试代码**: 14个测试文件，4,200行测试代码，151个测试用例
-- **UI组件**: 17个主要组件，支持复杂交互和动画
-- **服务层**: 13个服务类，处理API、语音、AI逻辑
-- **工具类**: 10个工具管理器，支持存储、主题、配置
-- **代码质量**: 100%类型安全，95%测试覆盖率
+- **源代码**: 82个ArkTS文件，约45,589行代码
+- **UI组件**: 25个主要组件，支持复杂交互和动画
+- **服务层**: 17个服务类，处理API、语音、AI逻辑、MCP工具
+- **工具类**: 18个工具管理器，支持存储、主题、配置、网络优化
+- **客户端**: 4个API客户端，支持多厂商AI模型调用
+- **类型定义**: 6个类型文件，提供完整的类型安全保障
+- **代码质量**: 100%类型安全，ArkTS严格模式

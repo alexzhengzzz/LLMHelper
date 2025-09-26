@@ -443,6 +443,7 @@ export interface SessionData {
   updatedAt: number;
   messageCount: number;
   systemPromptId: string | null; // 绑定的系统提示词ID
+  roleId?: string; // 关联的角色ID（用于专门标识角色会话）
 }
 
 // 会话信息模型
@@ -454,11 +455,13 @@ export class Session {
   @Trace updatedAt: number = 0;
   @Trace messageCount: number = 0;
   @Trace systemPromptId: string | null = null; // 绑定的系统提示词ID
+  @Trace roleId?: string; // 关联的角色ID（用于专门标识角色会话）
 
-  constructor(name: string = '', systemPromptId: string | null = null, id?: string) {
+  constructor(name: string = '', systemPromptId: string | null = null, roleId?: string, id?: string) {
     this.id = id || this.generateId();
     this.name = name;
     this.systemPromptId = systemPromptId;
+    this.roleId = roleId;
     this.createdAt = Date.now();
     this.updatedAt = Date.now();
     this.messageCount = 0;
@@ -509,7 +512,8 @@ export class Session {
     session.createdAt = obj.createdAt || Date.now();
     session.updatedAt = obj.updatedAt || Date.now();
     session.messageCount = obj.messageCount || 0;
-    session.systemPromptId = obj.systemPromptId || null; // 新增：从对象恢复systemPromptId
+    session.systemPromptId = obj.systemPromptId || null; // 从对象恢复systemPromptId
+    session.roleId = obj.roleId; // 从对象恢复roleId
     return session;
   }
 
@@ -523,7 +527,8 @@ export class Session {
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
       messageCount: this.messageCount,
-      systemPromptId: this.systemPromptId // 新增：包含systemPromptId
+      systemPromptId: this.systemPromptId,
+      roleId: this.roleId // 包含roleId
     };
   }
 

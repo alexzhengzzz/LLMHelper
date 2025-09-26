@@ -720,6 +720,17 @@ struct ChatPage {
           this.handleThinkingStepTap(step);
         }
       })
+
+      // 角色卡片组件
+      if (this.showRoleCard && this.currentSessionRole) {
+        RoleCardComponent({
+          role: this.currentSessionRole,
+          onRoleSelect: async (role: SystemPrompt) => {
+            await this.handleRoleSelect(role);
+            this.hideRoleCard();
+          }
+        })
+      }
     }
     .width('100%')
     .height('100%')
@@ -959,7 +970,30 @@ struct ChatPage {
         this.showSideDrawer = true;
       })
 
-      Blank()
+      // 中间：当前会话角色指示器
+      if (this.currentSessionRole) {
+        Row({ space: 4 }) {
+          Text(this.currentSessionRole.roleIcon || '🎭')
+            .fontSize(14)
+            .fontColor($r('app.color.primary_color'))
+          Text(this.currentSessionRole.name)
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: 80 })
+        }
+        .padding({ left: 8, right: 8 })
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius(16)
+        .border({
+          width: 1,
+          color: $r('app.color.primary_color')
+        })
+      } else {
+        Blank()
+      }
 
       // 右侧：功能按钮组
       Row({ space: 8 }) {
@@ -1042,6 +1076,16 @@ struct ChatPage {
     }
   }
 
+  // Helper method to get role name for message display
+  private getMessageRoleName(message: Message): string {
+    return this.currentSessionRole?.name || this.chatViewModel.getCurrentSessionSystemPrompt()?.name || 'AI助手';
+  }
+
+  // Helper method to get role icon for message display
+  private getMessageRoleIcon(): string {
+    return this.currentSessionRole?.roleIcon || '';
+  }
+
   @Builder
   buildTraditionalMessageItem(message: Message) {
     Row() {
@@ -1080,7 +1124,7 @@ struct ChatPage {
           Column() {
             // 消息头部：角色标签和音频按钮
             Row() {
-              Text(`${message.isDeepThinking ? '🧠 ' : ''}${this.chatViewModel.getCurrentSessionSystemPrompt()?.name || 'AI助手'}`)
+              Text(`${message.isDeepThinking ? '🧠 ' : ''}${this.getMessageRoleIcon()} ${this.getMessageRoleName(message)}`)
                 .fontSize(13)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.modern_role_label'))
@@ -1244,7 +1288,7 @@ struct ChatPage {
           Row() {
             this.buildAIAvatar()
             
-            Text(`${message.isDeepThinking ? '🧠 ' : ''}${this.chatViewModel.getCurrentSessionSystemPrompt()?.name || 'AI助手'}`)
+            Text(`${message.isDeepThinking ? '🧠 ' : ''}${this.getMessageRoleIcon()} ${this.getMessageRoleName(message)}`)
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.modern_role_label'))
@@ -2080,15 +2124,15 @@ struct ChatPage {
       },
       {
         id: 'prompts',
-        title: '提示词管理',
-        subtitle: '管理和编辑系统提示词模板',
-        icon: '🎯',
-        color: '#8E44AD',
-        backgroundColor: '#F3E8FF',
+        title: this.currentSessionRole ? '切换角色' : '角色管理',
+        subtitle: this.currentSessionRole ? `当前角色: ${this.currentSessionRole.name}` : '管理和编辑AI助手角色',
+        icon: this.currentSessionRole?.roleIcon || '🎭',
+        color: this.currentSessionRole ? '#27AE60' : '#8E44AD',
+        backgroundColor: this.currentSessionRole ? 'rgba(39, 174, 96, 0.1)' : '#F3E8FF',
         action: () => {
-          router.pushUrl({ 
-            url: 'pages/SystemPromptManagerPage',
-            params: { 
+          router.pushUrl({
+            url: 'pages/RoleManagerPage',
+            params: {
               fromChatPage: true,
               currentSessionId: this.chatViewModel.currentSession?.id || null
             }
@@ -2819,17 +2863,17 @@ struct ChatPage {
         }
       },
       {
-        id: 'system_prompt_manager',
-        title: '管理提示词',
-        description: '调整系统提示词与角色设定',
-        icon: '✏️',
+        id: 'role_manager',
+        title: '管理角色',
+        description: '调整AI助手角色与设定',
+        icon: '🎭',
         color: '#0984E3',
         backgroundColor: 'rgba(9, 132, 227, 0.1)',
         enabled: true,
         action: () => {
-          Logger.info('ChatPage', '跳转到系统提示词管理页面');
+          Logger.info('ChatPage', '跳转到角色管理页面');
           router.pushUrl({
-            url: 'pages/SystemPromptManagerPage',
+            url: 'pages/RoleManagerPage',
             params: {
               fromChatPage: true,
               currentSessionId: this.chatViewModel.currentSession?.id || null
