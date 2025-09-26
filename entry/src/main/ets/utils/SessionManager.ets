@@ -589,13 +589,101 @@ export class SessionManager {
   }
 
   /**
+   * 搜索会话 - 根据关键词搜索会话标题和消息内容
+   */
+  async searchSessions(query: string): Promise<Session[]> {
+    try {
+      Logger.info('SessionManager', `searchSessions被调用，原始查询: "${query}"`);
+
+      if (!query || !query.trim()) {
+        // 如果搜索词为空，返回所有会话
+        Logger.info('SessionManager', '搜索词为空，返回所有会话');
+        return await this.getSessions();
+      }
+
+      const lowerCaseQuery = query.toLowerCase().trim();
+      Logger.info('SessionManager', `搜索会话，关键词: "${lowerCaseQuery}"`);
+
+      // 获取所有会话
+      const allSessions = await this.getSessions();
+      Logger.info('SessionManager', `总共有 ${allSessions.length} 个会话`);
+
+      if (allSessions.length === 0) {
+        Logger.warn('SessionManager', '没有找到任何会话');
+        return [];
+      }
+
+      const matchedSessions: Session[] = [];
+
+      // 遍历每个会话进行检查
+      for (let i = 0; i < allSessions.length; i++) {
+        const session = allSessions[i];
+        Logger.info('SessionManager', `检查会话 ${i + 1}/${allSessions.length}: ${session.name} (ID: ${session.id})`);
+
+        // 1. 检查会话标题
+        const sessionNameLower = session.name.toLowerCase();
+        const titleMatch = sessionNameLower.includes(lowerCaseQuery);
+        Logger.info('SessionManager', `会话标题 "${session.name}" 是否包含 "${lowerCaseQuery}": ${titleMatch}`);
+
+        if (titleMatch) {
+          Logger.info('SessionManager', `会话标题匹配: ${session.name}`);
+          matchedSessions.push(session);
+          continue; // 匹配到标题，无需检查消息内容
+        }
+
+        // 2. 检查会话内的消息内容
+        try {
+          const messages = await this.getSessionMessages(session.id);
+          Logger.info('SessionManager', `会话 ${session.id} 有 ${messages.length} 条消息`);
+
+          let messageMatchFound = false;
+          for (let j = 0; j < messages.length; j++) {
+            const message = messages[j];
+            Logger.info('SessionManager', `检查消息 ${j + 1}/${messages.length}: content=${message.content ? message.content.substring(0, 30) + '...' : 'null'}`);
+
+            // 检查消息内容是否存在且有效
+            if (message.content && typeof message.content === 'string' && message.content.trim()) {
+              const messageContentLower = message.content.toLowerCase();
+              const contentMatch = messageContentLower.includes(lowerCaseQuery);
+              Logger.info('SessionManager', `消息内容是否包含 "${lowerCaseQuery}": ${contentMatch}`);
+
+              if (contentMatch) {
+                Logger.info('SessionManager', `消息内容匹配，会话: ${session.name}`);
+                matchedSessions.push(session);
+                messageMatchFound = true;
+                break; // 找到匹配的消息即可，继续检查下一个会话
+              }
+            } else {
+              Logger.info('SessionManager', `跳过无效消息: content=${message.content}`);
+            }
+          }
+
+          if (!messageMatchFound) {
+            Logger.info('SessionManager', `会话 ${session.name} 的消息中未找到匹配内容`);
+          }
+
+        } catch (error) {
+          Logger.error('SessionManager', `获取会话 ${session.id} 的消息失败，跳过消息内容搜索: ${error}`);
+        }
+      }
+
+      Logger.info('SessionManager', `搜索完成，找到 ${matchedSessions.length} 个匹配会话`);
+      return matchedSessions;
+
+    } catch (error) {
+      Logger.error('SessionManager', `搜索会话失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
    * 获取会话统计信息
    */
   async getSessionStats(): Promise<SessionStats> {
     try {
       const sessions = await this.getSessions();
       const currentSessionId = await this.getCurrentSessionId();
-      
+
       const stats: SessionStats = {
         totalSessions: sessions.length,
         maxSessions: this.MAX_SESSIONS,

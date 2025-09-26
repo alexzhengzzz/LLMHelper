@@ -59,10 +59,14 @@ export struct SideDrawerComponent {
   @Local isSessionItemSwiping: boolean = false; // 会话项正在滑动状态
   @Local isExiting: boolean = false; // 是否正在执行退出动画
   @Local activeTab: 'sessions' | 'roles' = 'sessions'; // 活跃标签页：会话或角色
+  @Local searchQuery: string = ''; // 搜索关键词
+  @Local filteredSessions: Session[] = []; // 搜索过滤后的会话列表
   
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private userProfileManager: UserProfileManager = UserProfileManager.getInstance();
   private swipeableItemRefs: Map<string, SwipeableSessionItemComponent> = new Map(); // 侧滑组件引用
+  private debounceTimer: number = 0; // 防抖定时器
+  private readonly DEBOUNCE_DELAY = 300; // 防抖延迟时间（毫秒）
   private avatarListener: (settings: AvatarSettings) => void = (settings: AvatarSettings) => {
     this.userAvatarType = settings.userAvatarType;
     this.userAvatarValue = settings.userAvatarValue;
@@ -117,6 +121,9 @@ export struct SideDrawerComponent {
     
     // 启动进入动画
     this.startEnterAnimation();
+
+    // 初始化过滤后的会话列表
+    this.filteredSessions = [...this.sessions];
   }
 
   /**
@@ -212,12 +219,18 @@ export struct SideDrawerComponent {
   }
 
   aboutToDisappear(): void {
+    // 清理防抖定时器
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = 0;
+    }
+
     // 移除用户资料监听器
     this.userProfileManager.removeProfileListener(this.userProfileListener);
-    
+
     // 移除头像设置监听器
     StorageManager.removeAvatarListener(this.avatarListener);
-    
+
     // 移除会话数据清除监听器
     // 注意：由于使用了箭头函数，这里移除监听器需要保存引用
     // 在当前实现中，监听器会在页面销毁时自动清理
@@ -590,15 +603,25 @@ export struct SideDrawerComponent {
         .alignItems(VerticalAlign.Center)
         .margin({ top: 8 })
 
+        // 搜索框
+        Search({ placeholder: '搜索会话历史...' })
+          .width('90%')
+          .height(36)
+          .margin({ top: 8, bottom: 8 })
+          .onChange((value: string) => {
+            this.searchQuery = value;
+            this.performSearch();
+          })
+
         // 会话列表
         Column() {
-          if (this.sessions.length > 0) {
-            ForEach(this.sessions, (session: Session, index: number) => {
+          if (this.filteredSessions.length > 0) {
+            ForEach(this.filteredSessions, (session: Session, index: number) => {
               SwipeableSessionItemComponent({
                 session: session,
                 systemPromptName: this.getSystemPromptName(session.systemPromptId), // 传递系统提示词名称
                 isCurrentSession: this.isCurrentSession(session),
-                isLast: index === this.sessions.length - 1,
+                isLast: index === this.filteredSessions.length - 1,
                 onSessionClick: (sessionId: string) => {
                   this.switchToSession(sessionId);
                 },
@@ -616,7 +639,7 @@ export struct SideDrawerComponent {
           } else {
             // 空状态
             Column() {
-              Text('暂无会话')
+              Text(this.searchQuery.trim() ? '没有找到匹配的会话' : '暂无会话')
                 .fontSize(14)
                 .fontColor($r('app.color.text_secondary'))
                 .margin({ top: 20, bottom: 20 })
@@ -901,6 +924,64 @@ export struct SideDrawerComponent {
     } catch (error) {
       Logger.error('SideDrawerComponent', `删除会话失败: ${error}`);
     }
+  }
+
+  /**
+   * 执行搜索过滤（带防抖功能）
+   */
+  private performSearch(): void {
+    // 清除之前的定时器
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+
+    // 设置新的定时器
+    this.debounceTimer = setTimeout(async () => {
+      try {
+        if (!this.searchQuery.trim()) {
+          // 如果搜索词为空，显示所有会话
+          this.filteredSessions = [...this.sessions];
+          Logger.debug('SideDrawerComponent', '搜索词为空，显示所有会话');
+        } else {
+          Logger.debug('SideDrawerComponent', `开始搜索，关键词: "${this.searchQuery}"`);
+          Logger.debug('SideDrawerComponent', `ChatViewModel存在: ${!!this.chatViewModel}`);
+
+          // 使用 SessionManager 的搜索方法
+          const sessionManager = this.chatViewModel?.getSessionManager();
+          if (sessionManager) {
+            Logger.debug('SideDrawerComponent', '找到SessionManager，开始深度搜索');
+            this.filteredSessions = await sessionManager.searchSessions(this.searchQuery);
+            Logger.info('SideDrawerComponent', `SessionManager搜索完成，找到 ${this.filteredSessions.length} 个匹配会话`);
+          } else {
+            Logger.warn('SideDrawerComponent', '未找到SessionManager，使用本地搜索（仅搜索会话名称）');
+            // 如果没有 SessionManager，使用本地搜索作为后备方案
+            const query = this.searchQuery.toLowerCase().trim();
+            this.filteredSessions = this.sessions.filter(session =>
+              session.name.toLowerCase().includes(query)
+            );
+            Logger.info('SideDrawerComponent', `本地搜索完成，找到 ${this.filteredSessions.length} 个匹配会话`);
+          }
+        }
+      } catch (error) {
+        Logger.error('SideDrawerComponent', `搜索会话失败: ${error}`);
+        // 搜索失败时显示所有会话
+        this.filteredSessions = [...this.sessions];
+      }
+    }, this.DEBOUNCE_DELAY);
+  }
+
+  /**
+   * 更新过滤后的会话列表
+   */
+  private updateFilteredSessions(): void {
+    this.performSearch();
+  }
+
+  /**
+   * 当sessions参数变化时自动调用
+   */
+  protected onSessionsChanged(): void {
+    this.updateFilteredSessions();
   }
 
   /**

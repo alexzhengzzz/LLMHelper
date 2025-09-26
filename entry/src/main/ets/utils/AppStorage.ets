@@ -937,12 +937,12 @@ export class AppStorage {
       const storage = AppStorage.getStorage();
       const messageKey = `session_${sessionId}_messages`;
       const messagesStr = await storage.get(messageKey, '[]');
-      
+
       if (!messagesStr || messagesStr === '[]') {
         Logger.debug('AppStorage', `会话没有消息: ${sessionId}`);
         return [];
       }
-      
+
       const messages: Message[] = JSON.parse(messagesStr as string);
       Logger.debug('AppStorage', `会话 ${sessionId} 有 ${messages.length} 条消息`);
       return messages;
