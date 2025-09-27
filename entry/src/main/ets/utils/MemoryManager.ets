@@ -305,17 +305,24 @@ export class MemoryManager {
       const memories = await this.getAllMemories();
       const lowerKeyword = keyword.toLowerCase().trim();
 
+      // 将关键词按空格分割成多个词汇进行搜索
+      const keywords = lowerKeyword.split(/\s+/).filter(k => k.length > 0);
+
       const matchedMemories = memories.filter(memory => {
-        // 在内容中搜索
-        const contentMatch = memory.content.toLowerCase().includes(lowerKeyword);
+        const lowerContent = memory.content.toLowerCase();
+        const lowerTags = memory.tags.map(tag => tag.toLowerCase());
 
-        // 在标签中搜索
-        const tagMatch = memory.tags.some(tag => tag.toLowerCase().includes(lowerKeyword));
+        // 检查是否有任何一个关键词匹配内容或标签
+        const hasMatch = keywords.some(kw => {
+          const contentMatch = lowerContent.includes(kw);
+          const tagMatch = lowerTags.some(tag => tag.includes(kw));
+          return contentMatch || tagMatch;
+        });
 
-        return contentMatch || tagMatch;
+        return hasMatch;
       });
 
-      Logger.debug('MemoryManager', `搜索关键词 "${keyword}" 找到 ${matchedMemories.length} 个记忆碎片`);
+      Logger.debug('MemoryManager', `搜索关键词 "${keyword}" (分解为: ${keywords.join(', ')}) 找到 ${matchedMemories.length} 个记忆碎片`);
       return matchedMemories;
     } catch (error) {
       Logger.error('MemoryManager', `搜索记忆碎片失败: ${error}`);

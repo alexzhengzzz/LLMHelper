@@ -16,6 +16,7 @@ import { Logger } from '../utils/Logger';
 import CalculatorTool from './CalculatorTool';
 import AppLauncherTool from './AppLauncherTool';
 import WeatherServiceTool from './WeatherServiceTool';
+import MemoryTool from './MemoryTool';
 import { AppStorage, MCPToolsConfig } from '../utils/AppStorage';
 
 /**
@@ -86,6 +87,21 @@ class WeatherServiceToolExecutor implements LocalToolExecutor {
 }
 
 /**
+ * 记忆搜索工具执行器
+ */
+class MemoryToolExecutor implements LocalToolExecutor {
+  private memoryTool: MemoryTool;
+
+  constructor(memoryTool: MemoryTool) {
+    this.memoryTool = memoryTool;
+  }
+
+  async execute(request: ToolCallRequest): Promise<ToolCallResult> {
+    return this.memoryTool.execute(request);
+  }
+}
+
+/**
  * 本地工具管理器
  * 管理和执行本地MCP工具
  */
@@ -103,6 +119,7 @@ export class LocalToolManager {
     this.registerCalculatorTool();
     this.registerAppLauncherTool();
     this.registerWeatherServiceTool();
+    this.registerMemoryTool();
 
     // 异步初始化工具配置
     this.initializeToolsConfig().then(() => {
@@ -201,6 +218,20 @@ export class LocalToolManager {
     this.toolExecutors.set(toolDefinition.name, executor);
 
     Logger.info('LocalToolManager', `Weather service tool registered: ${toolDefinition.name}`);
+  }
+
+  /**
+   * 注册记忆搜索工具
+   */
+  private registerMemoryTool(): void {
+    const memoryTool = MemoryTool.getInstance();
+    const toolDefinition = memoryTool.getToolDefinition();
+
+    this.registeredTools.set(toolDefinition.name, toolDefinition);
+    const executor: LocalToolExecutor = new MemoryToolExecutor(memoryTool);
+    this.toolExecutors.set(toolDefinition.name, executor);
+
+    Logger.info('LocalToolManager', `Memory tool registered: ${toolDefinition.name}`);
   }
 
   /**
@@ -380,6 +411,9 @@ export class LocalToolManager {
       return 'utility';
     }
     if (toolName === 'weather_service' || toolName.startsWith('weather_')) {
+      return 'utility';
+    }
+    if (toolName === 'search_memories' || toolName.startsWith('memory_')) {
       return 'utility';
     }
     return 'custom';
@@ -672,7 +706,7 @@ export class LocalToolManager {
         description: tool.description,
         usageCount: usageCount,
         configurable: true,
-        systemTool: ['calculator', 'app_launcher', 'weather_service'].includes(toolName)
+        systemTool: ['calculator', 'app_launcher', 'weather_service', 'search_memories'].includes(toolName)
       };
     } catch (error) {
       Logger.error('LocalToolManager', `Failed to get tool config: ${error}`);

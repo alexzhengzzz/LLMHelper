@@ -1141,31 +1141,21 @@ export class ChatViewModel {
   }
 
   /**
-   * 获取包含记忆注入的系统提示词内容
+   * 获取当前会话系统提示词内容
+   * 记忆功能现在通过search_memories工具动态获取，不再预先注入
    */
   async getSystemPromptWithMemory(): Promise<string> {
     try {
       // 获取原始系统提示词
       const originalPrompt = this.getCurrentSessionSystemPrompt();
-      let systemPromptContent = originalPrompt?.content || '';
+      const systemPromptContent = originalPrompt?.content || '';
 
-      // 生成记忆注入文本
-      const memoryInjectionText = await this.memoryManager.generateMemoryInjectionText();
-
-      // 如果有记忆需要注入，将其添加到系统提示词的最前面
-      if (memoryInjectionText) {
-        systemPromptContent = memoryInjectionText + '\n\n' + systemPromptContent;
-        Logger.info('ChatViewModel', '已注入记忆到系统提示词中');
-      } else {
-        Logger.debug('ChatViewModel', '没有激活的记忆需要注入');
-      }
-
+      Logger.debug('ChatViewModel', '返回原始系统提示词，记忆通过工具动态获取');
       return systemPromptContent;
     } catch (error) {
-      Logger.error('ChatViewModel', `获取包含记忆的系统提示词失败: ${error}`);
-      // 出错时返回原始系统提示词
-      const originalPrompt = this.getCurrentSessionSystemPrompt();
-      return originalPrompt?.content || '';
+      Logger.error('ChatViewModel', `获取系统提示词失败: ${error}`);
+      // 出错时返回空字符串
+      return '';
     }
   }
 
