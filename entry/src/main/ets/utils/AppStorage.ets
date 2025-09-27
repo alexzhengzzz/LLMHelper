@@ -1,6 +1,6 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { Message, MessageRole, ThinkingStatus, SystemPrompt, SystemPromptData, Session, SessionData } from '../models/ChatModels';
+import { Message, MessageRole, ThinkingStatus, SystemPrompt, SystemPromptData, Session, SessionData, MessageData, ThinkingStepData, MultiRoleSession, MultiRoleSessionData } from '../models/ChatModels';
 import { Logger } from './Logger';
 import { DefaultPrompts } from '../data/DefaultPrompts';
 
@@ -900,7 +900,7 @@ export class AppStorage {
       
       // 保存会话列表
       const storage = AppStorage.getStorage();
-      const serializableSessions: SessionData[] = sessions.map(s => s.toObject());
+      const serializableSessions = sessions.map(s => s.toObject());
       const jsonStr = JSON.stringify(serializableSessions);
       
       await storage.put(SESSIONS_KEY, jsonStr);
@@ -926,8 +926,13 @@ export class AppStorage {
         return [];
       }
 
-      const parsedObjects: SessionData[] = JSON.parse(sessionsStr as string);
-      const sessions: Session[] = parsedObjects.map((obj: SessionData) => Session.fromObject(obj));
+      const parsedObjects = JSON.parse(sessionsStr as string) as Array<SessionData | MultiRoleSessionData>;
+      const sessions: Session[] = parsedObjects.map((obj) => {
+        if ((obj as MultiRoleSessionData).participants !== undefined) {
+          return MultiRoleSession.fromObject(obj as MultiRoleSessionData);
+        }
+        return Session.fromObject(obj as SessionData);
+      });
 
       Logger.debug('AppStorage', `读取到 ${sessions.length} 个会话`);
       return sessions;
@@ -1032,6 +1037,7 @@ export class AppStorage {
         role?: string;
         content?: string | null | undefined;
         timestamp?: number;
+        isLoading?: boolean;
         isPlaying?: boolean;
         canPlayAudio?: boolean;
         toolStatus?: string;
@@ -1042,8 +1048,11 @@ export class AppStorage {
         searchInfo?: string;
         searchDetails?: string;
         isDeepThinking?: boolean;
-        thinkingSteps?: object[];
-        thinkingStatus?: string;
+        thinkingSteps?: ThinkingStepData[];
+        thinkingStatus?: ThinkingStatus | string;
+        senderRoleId?: string;
+        senderName?: string;
+        senderAvatar?: string;
       }
 
       const rawMessages: RawMessage[] = JSON.parse(messagesStr as string);
@@ -1073,33 +1082,33 @@ export class AppStorage {
             Logger.warn('AppStorage', `修复消息 ${index} 的content类型: ${typeof rawMsg.content} -> string`);
           }
 
-          // 创建完整的消息对象
-          const messageRole = (rawMsg.role === 'user' || rawMsg.role === 'assistant' || rawMsg.role === 'system')
-            ? rawMsg.role as MessageRole
-            : MessageRole.USER;
+          const isValidRole = rawMsg.role && Object.values(MessageRole).includes(rawMsg.role as MessageRole);
+          const messageRole = isValidRole ? rawMsg.role as MessageRole : MessageRole.USER;
 
-          const message = new Message(
-            messageRole,
+          const messageData: MessageData = {
+            id: rawMsg.id,
+            role: messageRole,
             content,
-            rawMsg.id
-          );
+            timestamp: rawMsg.timestamp || Date.now(),
+            isLoading: false,
+            isPlaying: rawMsg.isPlaying || false,
+            canPlayAudio: rawMsg.canPlayAudio ?? (messageRole === MessageRole.ASSISTANT),
+            toolStatus: rawMsg.toolStatus || 'idle',
+            toolType: rawMsg.toolType || '',
+            toolName: rawMsg.toolName || '',
+            mcpToolNames: rawMsg.mcpToolNames || [],
+            webUsed: rawMsg.webUsed || false,
+            searchInfo: rawMsg.searchInfo || '',
+            searchDetails: rawMsg.searchDetails || '',
+            isDeepThinking: rawMsg.isDeepThinking || false,
+            thinkingSteps: (rawMsg.thinkingSteps || []) as ThinkingStepData[],
+            thinkingStatus: (rawMsg.thinkingStatus as ThinkingStatus) || ThinkingStatus.IDLE,
+            senderRoleId: rawMsg.senderRoleId,
+            senderName: rawMsg.senderName,
+            senderAvatar: rawMsg.senderAvatar
+          };
 
-          // 恢复其他属性
-          message.timestamp = rawMsg.timestamp || Date.now();
-          message.isLoading = false; // 已保存的消息不应处于加载状态
-          message.isPlaying = rawMsg.isPlaying || false;
-          message.canPlayAudio = rawMsg.canPlayAudio || (rawMsg.role === 'assistant');
-          message.toolStatus = rawMsg.toolStatus || 'idle';
-          message.toolType = rawMsg.toolType || '';
-          message.toolName = rawMsg.toolName || '';
-          message.mcpToolNames = rawMsg.mcpToolNames || [];
-          message.webUsed = rawMsg.webUsed || false;
-          message.searchInfo = rawMsg.searchInfo || '';
-          message.searchDetails = rawMsg.searchDetails || '';
-          message.isDeepThinking = rawMsg.isDeepThinking || false;
-          message.thinkingSteps = []; // 初始化为空数组，避免类型冲突
-          message.thinkingStatus = ThinkingStatus.IDLE; // 使用枚举值
-
+          const message = Message.fromObject(messageData);
           validMessages.push(message);
           validCount++;
 
@@ -1148,8 +1157,11 @@ export class AppStorage {
         searchInfo: string;
         searchDetails: string;
         isDeepThinking: boolean;
-        thinkingSteps: object[];
-        thinkingStatus: string;
+        thinkingSteps: ThinkingStepData[];
+        thinkingStatus: ThinkingStatus;
+        senderRoleId?: string;
+        senderName?: string;
+        senderAvatar?: string;
       }
 
       // 过滤掉正在加载的消息，并确保数据完整性
@@ -1162,26 +1174,31 @@ export class AppStorage {
             msg.content = '';
           }
 
-          // 创建一个干净的消息对象，确保所有必要字段都存在
+          const serializable = msg.toObject();
+
           const storableMessage: StorableMessage = {
-            id: msg.id || '',
-            role: msg.role || 'user',
-            content: msg.content || '',
-            timestamp: msg.timestamp || Date.now(),
+            id: serializable.id || '',
+            role: serializable.role || MessageRole.USER,
+            content: serializable.content || '',
+            timestamp: serializable.timestamp || Date.now(),
             isLoading: false,
-            isPlaying: msg.isPlaying || false,
-            canPlayAudio: msg.canPlayAudio || false,
-            toolStatus: msg.toolStatus || 'idle',
-            toolType: msg.toolType || '',
-            toolName: msg.toolName || '',
-            mcpToolNames: msg.mcpToolNames || [],
-            webUsed: msg.webUsed || false,
-            searchInfo: msg.searchInfo || '',
-            searchDetails: msg.searchDetails || '',
-            isDeepThinking: msg.isDeepThinking || false,
-            thinkingSteps: msg.thinkingSteps || [],
-            thinkingStatus: msg.thinkingStatus || 'idle'
+            isPlaying: serializable.isPlaying || false,
+            canPlayAudio: serializable.canPlayAudio ?? (serializable.role === MessageRole.ASSISTANT),
+            toolStatus: serializable.toolStatus || 'idle',
+            toolType: serializable.toolType || '',
+            toolName: serializable.toolName || '',
+            mcpToolNames: serializable.mcpToolNames || [],
+            webUsed: serializable.webUsed || false,
+            searchInfo: serializable.searchInfo || '',
+            searchDetails: serializable.searchDetails || '',
+            isDeepThinking: serializable.isDeepThinking || false,
+            thinkingSteps: serializable.thinkingSteps || [],
+            thinkingStatus: serializable.thinkingStatus || ThinkingStatus.IDLE,
+            senderRoleId: serializable.senderRoleId,
+            senderName: serializable.senderName,
+            senderAvatar: serializable.senderAvatar
           };
+
           return storableMessage;
         });
 

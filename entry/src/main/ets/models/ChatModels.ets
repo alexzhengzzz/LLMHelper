@@ -12,6 +12,42 @@ export enum MessageRole {
   SYSTEM = 'system'
 }
 
+// 消息序列化接口
+export interface ThinkingStepData {
+  id: string;
+  title: string;
+  description: string;
+  content: string;
+  status: StepStatus;
+  startTime?: number;
+  endTime?: number;
+  duration?: number;
+  error?: string;
+}
+
+export interface MessageData {
+  id?: string;
+  role: string;
+  content: string;
+  timestamp: number;
+  isLoading?: boolean;
+  isPlaying?: boolean;
+  canPlayAudio?: boolean;
+  toolStatus?: string;
+  toolType?: string;
+  toolName?: string;
+  mcpToolNames?: string[];
+  webUsed?: boolean;
+  searchInfo?: string;
+  searchDetails?: string;
+  isDeepThinking?: boolean;
+  thinkingSteps?: ThinkingStepData[];
+  thinkingStatus?: ThinkingStatus;
+  senderRoleId?: string;
+  senderName?: string;
+  senderAvatar?: string;
+}
+
 // 深度思考状态枚举
 export enum ThinkingStatus {
   IDLE = 'idle',           // 空闲状态
@@ -80,6 +116,31 @@ export class ThinkingStep {
       this.duration = this.endTime - this.startTime;
     }
   }
+
+  static fromObject(data: ThinkingStepData): ThinkingStep {
+    const step = new ThinkingStep(data.id, data.title, data.description);
+    step.content = data.content;
+    step.status = data.status;
+    step.startTime = data.startTime;
+    step.endTime = data.endTime;
+    step.duration = data.duration;
+    step.error = data.error;
+    return step;
+  }
+
+  toObject(): ThinkingStepData {
+    return {
+      id: this.id,
+      title: this.title,
+      description: this.description,
+      content: this.content,
+      status: this.status,
+      startTime: this.startTime,
+      endTime: this.endTime,
+      duration: this.duration,
+      error: this.error
+    };
+  }
 }
 
 // 聊天消息模型
@@ -89,6 +150,9 @@ export class Message {
   @Trace role: MessageRole = MessageRole.USER;
   @Trace content: string = '';
   @Trace timestamp: number = 0;
+  @Trace senderRoleId?: string;
+  @Trace senderName?: string;
+  @Trace senderAvatar?: string;
   @Trace isLoading?: boolean = false;
   @Trace isPlaying?: boolean = false; // 是否正在播放语音
   @Trace canPlayAudio?: boolean = false; // 是否可以播放语音（只有assistant消息可播放）
@@ -108,6 +172,9 @@ export class Message {
     this.role = role;
     this.content = content;
     this.timestamp = Date.now();
+    this.senderRoleId = undefined;
+    this.senderName = undefined;
+    this.senderAvatar = undefined;
     // 只有assistant消息可以播放语音
     this.canPlayAudio = role === MessageRole.ASSISTANT;
     this.isPlaying = false;
@@ -124,6 +191,54 @@ export class Message {
 
   private generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+  }
+
+  static fromObject(data: MessageData): Message {
+    const role = (data.role as MessageRole) || MessageRole.USER;
+    const message = new Message(role, data.content || '', data.id);
+    message.timestamp = data.timestamp || Date.now();
+    message.isLoading = data.isLoading ?? false;
+    message.isPlaying = data.isPlaying ?? false;
+    message.canPlayAudio = data.canPlayAudio ?? (role === MessageRole.ASSISTANT);
+    message.toolStatus = data.toolStatus || 'idle';
+    message.toolType = data.toolType || '';
+    message.toolName = data.toolName || '';
+    message.mcpToolNames = data.mcpToolNames || [];
+    message.webUsed = data.webUsed || false;
+    message.searchInfo = data.searchInfo || '';
+    message.searchDetails = data.searchDetails || '';
+    message.isDeepThinking = data.isDeepThinking || false;
+    message.thinkingSteps = (data.thinkingSteps || []).map(step => ThinkingStep.fromObject(step));
+    message.thinkingStatus = data.thinkingStatus || ThinkingStatus.IDLE;
+    message.senderRoleId = data.senderRoleId;
+    message.senderName = data.senderName;
+    message.senderAvatar = data.senderAvatar;
+    return message;
+  }
+
+  toObject(): MessageData {
+    return {
+      id: this.id,
+      role: this.role,
+      content: this.content,
+      timestamp: this.timestamp,
+      isLoading: this.isLoading,
+      isPlaying: this.isPlaying,
+      canPlayAudio: this.canPlayAudio,
+      toolStatus: this.toolStatus,
+      toolType: this.toolType,
+      toolName: this.toolName,
+      mcpToolNames: this.mcpToolNames,
+      webUsed: this.webUsed,
+      searchInfo: this.searchInfo,
+      searchDetails: this.searchDetails,
+      isDeepThinking: this.isDeepThinking,
+      thinkingSteps: this.thinkingSteps?.map(step => step.toObject()),
+      thinkingStatus: this.thinkingStatus,
+      senderRoleId: this.senderRoleId,
+      senderName: this.senderName,
+      senderAvatar: this.senderAvatar
+    };
   }
 }
 
@@ -436,6 +551,41 @@ export interface PongData {
 //=================== 会话管理相关模型 ===================
 
 // 会话序列化接口
+export interface SessionParticipantData {
+  roleId: string;
+  displayName: string;
+  avatar?: string;
+  model?: string;
+}
+
+@ObservedV2
+export class SessionParticipant {
+  @Trace roleId: string = '';
+  @Trace displayName: string = '';
+  @Trace avatar?: string;
+  @Trace model?: string;
+
+  constructor(roleId: string, displayName: string, avatar?: string, model?: string) {
+    this.roleId = roleId;
+    this.displayName = displayName;
+    this.avatar = avatar;
+    this.model = model;
+  }
+
+  static fromObject(data: SessionParticipantData): SessionParticipant {
+    return new SessionParticipant(data.roleId, data.displayName, data.avatar, data.model);
+  }
+
+  toObject(): SessionParticipantData {
+    return {
+      roleId: this.roleId,
+      displayName: this.displayName,
+      avatar: this.avatar,
+      model: this.model
+    };
+  }
+}
+
 export interface SessionData {
   id: string;
   name: string;
@@ -444,6 +594,11 @@ export interface SessionData {
   messageCount: number;
   systemPromptId: string | null; // 绑定的系统提示词ID
   roleId?: string; // 关联的角色ID（用于专门标识角色会话）
+}
+
+export interface MultiRoleSessionData extends SessionData {
+  participants: SessionParticipantData[];
+  messages: MessageData[];
 }
 
 // 会话信息模型
@@ -551,6 +706,65 @@ export class Session {
       return updateTime.toLocaleDateString();
     }
   }
+}
+
+@ObservedV2
+export class MultiRoleSession extends Session {
+  @Trace participants: SessionParticipant[] = [];
+  @Trace messages: Message[] = [];
+
+  constructor(
+    name: string = '',
+    participants: SessionParticipant[] = [],
+    messages: Message[] = [],
+    systemPromptId: string | null = null,
+    roleId?: string,
+    id?: string
+  ) {
+    super(name, systemPromptId, roleId, id);
+    this.participants = participants;
+    this.messages = messages;
+  }
+
+  static fromObject(data: MultiRoleSessionData): MultiRoleSession {
+    const participants = (data.participants || []).map(participant => SessionParticipant.fromObject(participant));
+    const messages = (data.messages || []).map(message => Message.fromObject(message));
+    const session = new MultiRoleSession(
+      data.name || '',
+      participants,
+      messages,
+      data.systemPromptId ?? null,
+      data.roleId,
+      data.id
+    );
+    session.createdAt = data.createdAt || Date.now();
+    session.updatedAt = data.updatedAt || session.createdAt;
+    session.messageCount = data.messageCount || messages.length;
+    return session;
+  }
+
+  override toObject(): MultiRoleSessionData {
+    const base = super.toObject();
+    return {
+      id: base.id,
+      name: base.name,
+      createdAt: base.createdAt,
+      updatedAt: base.updatedAt,
+      messageCount: base.messageCount,
+      systemPromptId: base.systemPromptId,
+      roleId: base.roleId,
+      participants: this.participants.map(participant => participant.toObject()),
+      messages: this.messages.map(message => message.toObject())
+    };
+  }
+
+  getParticipant(roleId: string): SessionParticipant | undefined {
+    return this.participants.find(participant => participant.roleId === roleId);
+  }
+}
+
+export function isMultiRoleSession(session: Session | MultiRoleSession): boolean {
+  return (session as MultiRoleSession).participants !== undefined;
 }
 
 // WebSocket消息数据类型联合

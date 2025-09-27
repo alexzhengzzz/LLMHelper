@@ -1,4 +1,4 @@
-import { Session, SessionData, Message, SystemPrompt } from '../models/ChatModels';
+import { Session, Message, SystemPrompt, MultiRoleSession, SessionParticipant, SessionParticipantData, isMultiRoleSession } from '../models/ChatModels';
 import { AppStorage } from './AppStorage';
 import { Logger } from './Logger';
 
@@ -15,6 +15,17 @@ interface SessionDataQuality {
   invalidMessages: number;
   emptyContentMessages: number;
   sessionsWithIssues: string[];
+}
+
+interface SaveSessionMessagesOptions {
+  participants?: Array<SessionParticipant | SessionParticipantData>;
+  name?: string;
+}
+
+interface UpdateSessionInfoOptions {
+  name?: string;
+  messages?: Message[];
+  participants?: Array<SessionParticipant | SessionParticipantData>;
 }
 
 /**
@@ -447,13 +458,22 @@ export class SessionManager {
   /**
    * 保存会话消息
    */
-  async saveSessionMessages(sessionId: string, messages: Message[]): Promise<void> {
+  async saveSessionMessages(
+    sessionId: string,
+    messages: Message[],
+    options?: SaveSessionMessagesOptions
+  ): Promise<void> {
     try {
       await AppStorage.saveSessionMessages(sessionId, messages);
-      
-      // 更新会话的消息数量和更新时间
-      await this.updateSessionInfo(sessionId, messages.length);
-      
+
+      // 更新会话的消息数量、更新时间及参与者快照
+      const updateOptions: UpdateSessionInfoOptions = {
+        messages,
+        participants: options?.participants,
+        name: options?.name
+      };
+      await this.updateSessionInfo(sessionId, messages.length, updateOptions);
+
       Logger.debug('SessionManager', `保存会话消息: ${sessionId}, 数量: ${messages.length}`);
     } catch (error) {
       Logger.error('SessionManager', `保存会话消息失败: ${error}`);
@@ -464,18 +484,188 @@ export class SessionManager {
   /**
    * 更新会话信息（消息数量、更新时间等）
    */
-  async updateSessionInfo(sessionId: string, messageCount?: number): Promise<void> {
+  async updateSessionInfo(
+    sessionId: string,
+    messageCount?: number,
+    options?: UpdateSessionInfoOptions
+  ): Promise<void> {
     try {
       const sessions = await this.getSessions();
       const session = sessions.find(s => s.id === sessionId);
-      
+
       if (session) {
-        session.updateInfo(messageCount);
+        const nextMessageCount = messageCount ?? options?.messages?.length ?? session.messageCount;
+        const nextName = options?.name ?? session.name;
+
+        session.updateInfo(nextMessageCount, nextName);
+
+        if (isMultiRoleSession(session)) {
+          const multiSession = session as MultiRoleSession;
+          const snapshotMessages = options?.messages;
+
+          if (snapshotMessages) {
+            multiSession.messages = snapshotMessages.map(message => Message.fromObject(message.toObject()));
+          }
+
+          if (options?.participants !== undefined) {
+            multiSession.participants = this.normalizeParticipants(options.participants);
+          } else if (snapshotMessages) {
+            multiSession.participants = this.buildParticipantSnapshot(snapshotMessages, multiSession.participants);
+          }
+        }
+
         await AppStorage.saveSession(session);
         Logger.debug('SessionManager', `更新会话信息: ${sessionId}`);
       }
     } catch (error) {
       Logger.error('SessionManager', `更新会话信息失败: ${error}`);
+    }
+  }
+
+  private normalizeParticipants(participants: Array<SessionParticipant | SessionParticipantData>): SessionParticipant[] {
+    return participants
+      .filter(participant => participant !== undefined && participant !== null)
+      .map(participant => {
+      if (participant instanceof SessionParticipant) {
+        return SessionParticipant.fromObject(participant.toObject());
+      }
+      return SessionParticipant.fromObject(participant);
+    });
+  }
+
+  private buildParticipantSnapshot(
+    messages: Message[],
+    existingParticipants: Array<SessionParticipant | SessionParticipantData> = []
+  ): SessionParticipant[] {
+    const participantsMap = new Map<string, SessionParticipant>();
+
+    this.normalizeParticipants(existingParticipants).forEach(existing => {
+      if (!existing.roleId) {
+        return;
+      }
+      participantsMap.set(existing.roleId, existing);
+    });
+
+    messages.forEach(message => {
+      const roleKey = message.senderRoleId || message.role;
+      if (!roleKey) {
+        return;
+      }
+
+      const existing = participantsMap.get(roleKey);
+      const displayName = message.senderName || existing?.displayName || roleKey;
+      const avatar = message.senderAvatar !== undefined ? message.senderAvatar : existing?.avatar;
+      const model = existing?.model;
+
+      if (existing) {
+        existing.displayName = displayName;
+        existing.avatar = avatar;
+      } else {
+        participantsMap.set(roleKey, new SessionParticipant(roleKey, displayName, avatar, model));
+      }
+    });
+
+    return Array.from(participantsMap.values());
+  }
+
+  /**
+   * 构建多人会话快照（包含参与者和消息）
+   */
+  async getMultiRoleSession(sessionId: string): Promise<MultiRoleSession | null> {
+    try {
+      const sessions = await this.getSessions();
+      const baseSession = sessions.find(s => s.id === sessionId);
+
+      if (!baseSession) {
+        Logger.warn('SessionManager', `未找到会话用于生成多人会话快照: ${sessionId}`);
+        return null;
+      }
+
+      const messages = await this.getSessionMessages(sessionId);
+      const participants = this.buildParticipantSnapshot(
+        messages,
+        isMultiRoleSession(baseSession) ? (baseSession as MultiRoleSession).participants : []
+      );
+
+      const multiSession = new MultiRoleSession(
+        baseSession.name,
+        participants,
+        messages,
+        baseSession.systemPromptId,
+        baseSession.roleId,
+        baseSession.id
+      );
+      multiSession.createdAt = baseSession.createdAt;
+      multiSession.updatedAt = baseSession.updatedAt;
+      multiSession.messageCount = messages.length;
+
+      return multiSession;
+    } catch (error) {
+      Logger.error('SessionManager', `获取多人会话失败: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * 保存多人会话（同步消息与参与者快照）
+   */
+  async saveMultiRoleSession(session: MultiRoleSession): Promise<void> {
+    try {
+      const messages = session.messages || [];
+      const participants = session.participants || [];
+
+      const saveOptions: SaveSessionMessagesOptions = {
+        participants,
+        name: session.name
+      };
+      await this.saveSessionMessages(session.id, messages, saveOptions);
+
+      Logger.info('SessionManager', `保存多人会话成功: ${session.id}`);
+    } catch (error) {
+      Logger.error('SessionManager', `保存多人会话失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 获取会话参与者列表
+   */
+  async getSessionParticipants(sessionId: string): Promise<SessionParticipant[]> {
+    try {
+      const sessions = await this.getSessions();
+      const session = sessions.find(s => s.id === sessionId);
+
+      if (!session) {
+        Logger.warn('SessionManager', `未找到会话参与者: ${sessionId}`);
+        return [];
+      }
+
+      if (isMultiRoleSession(session)) {
+        return this.normalizeParticipants((session as MultiRoleSession).participants);
+      }
+
+      const messages = await this.getSessionMessages(sessionId);
+      return this.buildParticipantSnapshot(messages);
+    } catch (error) {
+      Logger.error('SessionManager', `获取会话参与者失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 更新会话参与者信息（不触发消息变更）
+   */
+  async updateSessionParticipants(
+    sessionId: string,
+    participants: Array<SessionParticipant | SessionParticipantData>
+  ): Promise<void> {
+    try {
+      const updateOptions: UpdateSessionInfoOptions = { participants };
+      await this.updateSessionInfo(sessionId, undefined, updateOptions);
+      Logger.debug('SessionManager', `更新会话参与者: ${sessionId}, 数量: ${participants.length}`);
+    } catch (error) {
+      Logger.error('SessionManager', `更新会话参与者失败: ${error}`);
+      throw error as Error;
     }
   }
 
