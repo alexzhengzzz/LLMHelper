@@ -7,6 +7,7 @@ import { Logger } from './Logger';
 import { resourceManager } from '@kit.LocalizationKit';
 import { AppContext } from './AppContext';
 import { ServerConfigManager, ServerEndpoint } from './ServerConfigManager';
+import { util } from '@kit.ArkTS';
 
 export interface ServerConfig {
   baseUrl: string;
@@ -126,19 +127,19 @@ export class AppConfigManager {
 
   private async loadConfigFromResource(): Promise<AppConfiguration | null> {
     try {
-      Logger.info('AppConfigManager', '尝试从资源文件加载配置');
-      
+      Logger.debug('AppConfigManager', '尝试从资源文件加载配置');
+
       // 从配置文件读取配置
       const configFromFile = await this.loadConfigFromFile();
       if (configFromFile) {
         Logger.info('AppConfigManager', '从配置文件加载配置成功');
         return configFromFile;
       }
-      
-      Logger.info('AppConfigManager', '配置文件不存在，使用默认配置');
+
+      Logger.debug('AppConfigManager', '配置文件不存在，使用默认配置');
       return null;
     } catch (error) {
-      Logger.warn('AppConfigManager', `加载资源配置失败: ${error}，使用默认配置`);
+      Logger.debug('AppConfigManager', `加载资源配置失败: ${error}，使用默认配置`);
       return null;
     }
   }
@@ -154,12 +155,10 @@ export class AppConfigManager {
 
       // 读取配置文件
       const rawFileContent: Uint8Array = await resMgr.getRawFileContent('config.json');
-      
-      // 转换为字符串
-      let configString = '';
-      for (let i = 0; i < rawFileContent.length; i++) {
-        configString += String.fromCharCode(rawFileContent[i]);
-      }
+
+      // 使用鸿蒙系统的util.TextDecoder正确处理UTF-8编码
+      const textDecoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
+      const configString = textDecoder.decodeToString(rawFileContent);
       
       // 解析JSON
       const configFromFile = JSON.parse(configString) as AppConfiguration;

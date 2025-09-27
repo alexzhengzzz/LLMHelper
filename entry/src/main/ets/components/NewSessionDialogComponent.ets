@@ -7,6 +7,7 @@ export interface NewSessionSelection {
   mode: SessionMode;
   systemPrompt: SystemPrompt | null;
   participants: SystemPrompt[];
+  discussionRounds?: number; // 讨论轮数，1-5轮
 }
 
 interface ModeOption {
@@ -28,6 +29,7 @@ export struct NewSessionDialogComponent {
   @Local sessionMode: SessionMode = 'single';
   @Local selectedParticipantIds: string[] = [];
   @Local refreshCounter: number = 0; // 用于强制刷新UI
+  @Local discussionRounds: number = 3; // 讨论轮数，1-5轮
   private readonly modeOptions: ModeOption[] = [
     { value: 'single', label: '单人模式' },
     { value: 'multi', label: '多人模式' }
@@ -41,6 +43,7 @@ export struct NewSessionDialogComponent {
     this.sessionMode = 'single';
     this.searchText = '';
     this.selectedParticipantIds = [];
+    this.discussionRounds = 3; // 重置为默认3轮
     Logger.debug('NewSessionDialogComponent', `initializeDefaultSelection: ${this.systemPrompts.length} prompts available`);
 
     // 默认选中第一个系统提示词（如果有的话）
@@ -95,6 +98,9 @@ export struct NewSessionDialogComponent {
           .width('100%')
           .textAlign(TextAlign.Start)
           .padding({ left: 20, right: 20, bottom: 8 })
+
+        // 轮数选择器
+        this.buildDiscussionRoundsSelector()
       }
 
       // 搜索输入框
@@ -178,6 +184,55 @@ export struct NewSessionDialogComponent {
     }
     .padding({ left: 20, right: 20, bottom: 12 })
     .width('100%')
+  }
+
+  @Builder
+  buildDiscussionRoundsSelector() {
+    Column() {
+      Row() {
+        Text('讨论轮数')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+
+        Blank()
+
+        Text(`${this.discussionRounds} 轮`)
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .backgroundColor($r('app.color.input_background'))
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .borderRadius(12)
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, bottom: 8 })
+
+      // 轮数选择按钮组
+      Row({ space: 8 }) {
+        ForEach([1, 2, 3, 4, 5], (rounds: number) => {
+          Button(`${rounds}轮`)
+            .fontSize(12)
+            .fontColor(this.discussionRounds === rounds ? Color.White : $r('app.color.text_primary'))
+            .backgroundColor(this.discussionRounds === rounds ? $r('app.color.primary_color') : Color.Transparent)
+            .borderRadius(16)
+            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+            .borderWidth(1)
+            .borderColor(this.discussionRounds === rounds ? $r('app.color.primary_color') : $r('app.color.border_color'))
+            .onClick(() => {
+              this.discussionRounds = rounds;
+            })
+        }, (rounds: number) => rounds.toString())
+      }
+      .padding({ left: 20, right: 20, bottom: 8 })
+
+      // 轮数说明
+      Text(`每条消息会让角色们进行 ${this.discussionRounds} 轮讨论${this.discussionRounds >= 4 ? '（深度讨论）' : this.discussionRounds >= 2 ? '（适度讨论）' : '（简单回应）'}`)
+        .fontSize(11)
+        .fontColor($r('app.color.text_tertiary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+        .padding({ left: 20, right: 20, bottom: 12 })
+    }
   }
 
   @Builder
@@ -390,7 +445,8 @@ export struct NewSessionDialogComponent {
     return {
       mode: this.sessionMode,
       systemPrompt: this.sessionMode === 'single' ? this.selectedPrompt : null,
-      participants: this.sessionMode === 'multi' ? this.getSelectedParticipants() : []
+      participants: this.sessionMode === 'multi' ? this.getSelectedParticipants() : [],
+      discussionRounds: this.sessionMode === 'multi' ? this.discussionRounds : undefined
     };
   }
 

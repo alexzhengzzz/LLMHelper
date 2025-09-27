@@ -165,17 +165,17 @@ export class AppLauncherTool {
       }
 
       // 检查应用是否存在
-      const appCheck = await this.checkAppExists(launchParams.bundleName);
-      if (!appCheck.exists) {
-        const errorResult: ToolCallResult = {
-          content: [{
-            type: 'text',
-            text: `应用不存在: ${launchParams.bundleName}`
-          }],
-          isError: true
-        };
-        return errorResult;
-      }
+      // const appCheck = await this.checkAppExists(launchParams.bundleName);
+      // if (!appCheck.exists) {
+      //   const errorResult: ToolCallResult = {
+      //     content: [{
+      //       type: 'text',
+      //       text: `应用不存在: ${launchParams.bundleName}`
+      //     }],
+      //     isError: true
+      //   };
+      //   return errorResult;
+      // }
 
       // 启动应用
       const launchResult = await this.launchApplication(launchParams);
@@ -276,7 +276,7 @@ export class AppLauncherTool {
    */
   private async checkAppExists(bundleName: string): Promise<AppLaunchExistenceCheck> {
     try {
-      const bundleInfo = await bundleManager.getBundleInfo(bundleName, bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+      const bundleInfo = await bundleManager.getBundleInfo(bundleName, bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION);
       return {
         exists: true,
         appName: bundleInfo.name

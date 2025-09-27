@@ -160,9 +160,9 @@ export class SessionManager {
   /**
    * 创建多人会话
    */
-  async createMultiRoleSession(participantPrompts: SystemPrompt[]): Promise<MultiRoleSession> {
+  async createMultiRoleSession(participantPrompts: SystemPrompt[], discussionRounds: number = 3): Promise<MultiRoleSession> {
     try {
-      Logger.info('SessionManager', `创建多人会话，参与者数量: ${participantPrompts.length}`);
+      Logger.info('SessionManager', `创建多人会话，参与者数量: ${participantPrompts.length}, 讨论轮数: ${discussionRounds}`);
 
       const existingSessions = await this.getSessions();
       if (existingSessions.length >= this.MAX_SESSIONS) {
@@ -176,12 +176,12 @@ export class SessionManager {
       const normalizedParticipants = this.normalizeParticipants(participants);
 
       const sessionName = this.buildMultiSessionName(normalizedParticipants, existingSessions.length);
-      const session = new MultiRoleSession(sessionName, normalizedParticipants, []);
+      const session = new MultiRoleSession(sessionName, normalizedParticipants, [], undefined, undefined, undefined, discussionRounds);
 
       await AppStorage.saveSession(session);
       await this.setCurrentSession(session.id);
 
-      Logger.info('SessionManager', `新多人会话创建成功: ${session.id}`);
+      Logger.info('SessionManager', `新多人会话创建成功: ${session.id}, 讨论轮数: ${discussionRounds}`);
       return session;
     } catch (error) {
       Logger.error('SessionManager', `创建多人会话失败: ${error}`);
@@ -582,8 +582,11 @@ export class SessionManager {
   ): SessionParticipant[] {
     const participantsMap = new Map<string, SessionParticipant>();
 
+    // 系统角色过滤器 - 这些角色不应该出现在参与者列表中
+    const systemRoles = new Set(['user', 'assistant', 'system']);
+
     this.normalizeParticipants(existingParticipants).forEach(existing => {
-      if (!existing.roleId) {
+      if (!existing.roleId || systemRoles.has(existing.roleId)) {
         return;
       }
       participantsMap.set(existing.roleId, existing);
@@ -591,7 +594,7 @@ export class SessionManager {
 
     messages.forEach(message => {
       const roleKey = message.senderRoleId || message.role;
-      if (!roleKey) {
+      if (!roleKey || systemRoles.has(roleKey)) {
         return;
       }
 

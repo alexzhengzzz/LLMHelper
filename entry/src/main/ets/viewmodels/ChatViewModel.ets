@@ -1,4 +1,4 @@
-import { Message, MessageRole, ChatRequest, Provider, SimpleMessage, SystemPrompt, Session, ThinkingStatus, ThinkingStep, ToolCall } from '../models/ChatModels';
+import { Message, MessageRole, ChatRequest, Provider, SimpleMessage, SystemPrompt, Session, MultiRoleSession, isMultiRoleSession, SessionParticipant, ThinkingStatus, ThinkingStep, ToolCall, DebateSession, DebateStatus, DebateParticipantStats } from '../models/ChatModels';
 import { ApiService } from '../services/ApiService';
 import { APIManager, APIMode, AIProvider } from '../services/APIManager';
 import { ChatRequest as APIChatRequest, ChatMessage as APIChatMessage } from '../types/APITypes';
@@ -394,7 +394,7 @@ export class ChatViewModel {
         enableTools: true, // 启用工具调用
         systemPrompt: systemPromptWithMemory,
         stream: false,
-        max_tokens: 1000,
+        max_tokens: 1500,
         temperature: 0.7
       };
   
@@ -461,7 +461,7 @@ export class ChatViewModel {
           return apiMsg;
         }),
         model: this.currentModel,
-        max_tokens: 1000,
+        max_tokens: 1500,
         temperature: 0.7,
         enable_web: enableWebSearch
       };
@@ -541,6 +541,788 @@ export class ChatViewModel {
       assistantMessage.isLoading = false;
       throw new Error(errorMessage);
     }
+  }
+
+  /**
+   * 处理多人会话多轮讨论
+   */
+  private async handleMultiRoleDiscussion(
+    content: string,
+    assistantMessage: Message,
+    enableWebSearch: boolean
+  ): Promise<void> {
+    if (!this.currentSession || !isMultiRoleSession(this.currentSession)) {
+      Logger.error('ChatViewModel', '多人会话讨论失败：当前会话不是多人会话');
+      assistantMessage.content = '抱歉，多人会话处理失败';
+      assistantMessage.isLoading = false;
+      return;
+    }
+
+    const multiRoleSession = this.currentSession as MultiRoleSession;
+    const participants = multiRoleSession.participants;
+    const discussionRounds = multiRoleSession.discussionRounds || 3;
+
+    Logger.info('ChatViewModel', `开始多人讨论：${participants.length}个参与者，${discussionRounds}轮讨论`);
+
+    try {
+      // 构建讨论结果
+      let discussionResult = `🎯 **多人讨论结果**（${discussionRounds}轮）\n\n`;
+
+      // 为每轮讨论收集参与者的回应
+      for (let round = 1; round <= discussionRounds; round++) {
+        discussionResult += `### 第${round}轮讨论\n\n`;
+
+        // 让每个参与者参与讨论
+        for (const participant of participants) {
+          try {
+            // 构建当前参与者的系统提示词
+            const participantSystemPrompt = this.getParticipantSystemPrompt(participant, round, discussionRounds);
+
+            // 构建消息历史
+            const messages = this.buildDiscussionMessages(content, participantSystemPrompt, round, participants);
+
+            // 发送API请求获取参与者回应
+            const response = await this.getParticipantResponse(messages, participant);
+
+            // 添加到讨论结果
+            discussionResult += `**${participant.displayName}**：${response}\n\n`;
+
+            // 添加小延迟避免API限流
+            await this.delay(500);
+
+          } catch (error) {
+            Logger.error('ChatViewModel', `参与者${participant.displayName}第${round}轮讨论失败: ${(error as Error).message}`);
+            discussionResult += `**${participant.displayName}**：[讨论失败]\n\n`;
+          }
+        }
+
+        discussionResult += `---\n\n`;
+      }
+
+      // 生成总结
+      discussionResult += `### 📝 讨论总结\n\n`;
+      const summary = await this.generateDiscussionSummary(content, discussionResult, participants);
+      discussionResult += summary;
+
+      // 设置最终结果
+      assistantMessage.content = discussionResult;
+      assistantMessage.isLoading = false;
+
+      Logger.info('ChatViewModel', `多人讨论完成，共${discussionRounds}轮`);
+
+    } catch (error) {
+      const errorMessage = (error as Error).message;
+      Logger.error('ChatViewModel', `多人讨论失败: ${errorMessage}`);
+      assistantMessage.content = `抱歉，多人讨论过程中出现错误：${errorMessage}`;
+      assistantMessage.isLoading = false;
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * 获取参与者的系统提示词
+   */
+  private getParticipantSystemPrompt(participant: SessionParticipant, currentRound: number, totalRounds: number): string {
+    const basePrompt = `你是一个专业的AI助手，名为${participant.displayName}。
+
+当前是多人讨论的第${currentRound}轮（共${totalRounds}轮）。
+
+你的角色特点：
+- 专业的知识和见解
+- 建设性的讨论态度
+- 尊重其他参与者的观点
+- 提供有价值的补充信息
+
+讨论规则：
+1. 基于用户的原始问题提供你的专业观点
+2. 可以参考前面轮次的讨论（如果有）
+3. 保持简洁明了，1-2句话即可
+4. 避免重复其他参与者已经提到的观点
+5. 专注于你的专业领域`;
+
+    return basePrompt;
+  }
+
+  /**
+   * 构建讨论消息历史
+   */
+  private buildDiscussionMessages(
+    userContent: string,
+    systemPrompt: string,
+    currentRound: number,
+    participants: SessionParticipant[]
+  ): SimpleMessage[] {
+    const messages: SimpleMessage[] = [];
+
+    // 添加系统提示词
+    messages.push({
+      role: 'system',
+      content: systemPrompt
+    });
+
+    // 添加用户原始消息
+    messages.push({
+      role: 'user',
+      content: `用户问题：${userContent}
+
+请注意：这是多人讨论的第${currentRound}轮，共有${participants.length}个参与者参与讨论。请提供你的专业观点。`
+    });
+
+    return messages;
+  }
+
+  /**
+   * 获取参与者的回应
+   */
+  private async getParticipantResponse(messages: SimpleMessage[], participant: SessionParticipant): Promise<string> {
+    try {
+      // 使用参与者指定的模型或默认模型
+      const model = participant.model || this.currentModel;
+
+      const apiRequest: APIChatRequest = {
+        messages: messages,
+        model: model,
+        max_tokens: 1500, // 增加回复长度限制，支持更完整的表达
+        temperature: 0.7,
+        enable_web: false // 讨论中不启用网络搜索
+      };
+
+      const apiResponse = await this.apiManager.sendChatRequest(apiRequest);
+      const response = apiResponse.choices[0]?.message?.content || '无回应';
+
+      // 清理回复，去除多余的格式
+      return response.trim().replace(/^#+\s*/, '').replace(/\n{3,}/g, '\n\n');
+
+    } catch (error) {
+      Logger.error('ChatViewModel', `获取参与者${participant.displayName}回应失败: ${(error as Error).message}`);
+      return '回应失败';
+    }
+  }
+
+  /**
+   * 生成讨论总结
+   */
+  private async generateDiscussionSummary(userQuestion: string, discussionContent: string, participants: SessionParticipant[]): Promise<string> {
+    try {
+      const summaryPrompt = `请根据以下多人讨论内容，生成一个简洁的总结（200字以内）：
+
+用户问题：${userQuestion}
+
+讨论内容：
+${discussionContent}
+
+总结要求：
+1. 概括主要观点和共识
+2. 指出不同意见（如果有）
+3. 给出最终的建议或答案
+4. 保持客观中立的态度`;
+
+      const summaryMessages: SimpleMessage[] = [
+        { role: 'system', content: '你是一个专业的讨论总结助手，擅长提炼多人讨论的核心观点。' },
+        { role: 'user', content: summaryPrompt }
+      ];
+
+      const apiRequest: APIChatRequest = {
+        messages: summaryMessages,
+        model: this.currentModel,
+        max_tokens: 1500,
+        temperature: 0.5,
+        enable_web: false
+      };
+
+      const apiResponse = await this.apiManager.sendChatRequest(apiRequest);
+      return apiResponse.choices[0]?.message?.content || '讨论总结生成失败';
+
+    } catch (error) {
+      Logger.error('ChatViewModel', `生成讨论总结失败: ${(error as Error).message}`);
+      return '无法生成讨论总结';
+    }
+  }
+
+  //=================== 辩论系统相关方法 ===================
+
+  /**
+   * 从用户第一句话提取辩论主题
+   */
+  private extractDebateTopic(userMessage: string): string {
+    // 清理用户消息，移除多余空白字符
+    const cleanMessage = userMessage.trim();
+
+    // 如果消息较短（小于50字符），直接作为主题
+    if (cleanMessage.length <= 50) {
+      return cleanMessage;
+    }
+
+    // 使用正则表达式提取主题
+    // 匹配问句、陈述句或观点表达
+    const topicPatterns = [
+      /^(.+？)/, // 中文问句
+      /^(.+?\?)/, // 英文问句
+      /^(.+?[。！？!?])/, // 以句号、感叹号或问号结尾的句子
+      /^(.{10,50}?[，,、])/, // 10-50字符的短语（以逗号或顿号结尾）
+      /^(.{20,60}?)/ // 20-60字符的短语
+    ];
+
+    for (const pattern of topicPatterns) {
+      const match = cleanMessage.match(pattern);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+
+    // 如果没有匹配到合适的模式，取前40个字符
+    return cleanMessage.substring(0, 40) + (cleanMessage.length > 40 ? '...' : '');
+  }
+
+  /**
+   * 分析讨论激烈程度
+   */
+  private analyzeDiscussionIntensity(messages: Message[]): number {
+    if (messages.length === 0) return 0;
+
+    let intensityScore = 0;
+    const recentMessages = messages.slice(-10); // 分析最近10条消息
+
+    for (const message of recentMessages) {
+      if (message.role === MessageRole.ASSISTANT && message.content) {
+        const content = message.content.toLowerCase();
+
+        // 检测激烈讨论的关键词
+        const intenseKeywords = [
+          '强烈', '坚决', '完全不同意', '绝对', '必须', '错误', '反对', '批评',
+          'strongly', 'absolutely', 'completely disagree', 'must', 'wrong', 'oppose', 'criticize'
+        ];
+
+        // 检测温和讨论的关键词
+        const mildKeywords = [
+          '建议', '或许', '可能', '也许', '个人观点', '仅供参考', '温和',
+          'suggest', 'perhaps', 'maybe', 'personal opinion', 'reference only', 'mild'
+        ];
+
+        // 计算强度分数
+        for (const keyword of intenseKeywords) {
+          if (content.includes(keyword)) {
+            intensityScore += 2;
+          }
+        }
+
+        for (const keyword of mildKeywords) {
+          if (content.includes(keyword)) {
+            intensityScore += 0.5;
+          }
+        }
+
+        // 检测感叹号和问号数量
+        const punctuationCount = (content.match(/[!？?]/g) || []).length;
+        intensityScore += punctuationCount * 0.5;
+
+        // 检测消息长度（较长的回复可能表示更深入的讨论）
+        if (content.length > 200) {
+          intensityScore += 1;
+        }
+      }
+    }
+
+    // 将强度分数归一化到0-10的范围
+    const maxPossibleIntensity = recentMessages.length * 5;
+    const normalizedIntensity = maxPossibleIntensity > 0 ? (intensityScore / maxPossibleIntensity) * 10 : 0;
+
+    return Math.min(10, Math.max(0, normalizedIntensity));
+  }
+
+  /**
+   * 生成带上下文的辩论提示词
+   */
+  private generateContextualDebatePrompt(
+    participant: SessionParticipant,
+    debateTopic: string,
+    currentRound: number,
+    totalRounds: number,
+    discussionIntensity: number,
+    previousMessages: Message[]
+  ): string {
+    const basePrompt = `你是一个专业的辩论参与者，名为${participant.displayName}。
+
+**辩论主题**：${debateTopic}
+
+**当前阶段**：第${currentRound}轮（共${totalRounds}轮）
+
+**讨论激烈程度**：${discussionIntensity.toFixed(1)}/10
+
+**你的角色定位**：
+- 基于${participant.displayName}的专业背景和观点
+- 提供有深度和见解的论点
+- 保持建设性的辩论态度`;
+
+    let contextualPrompt = basePrompt;
+
+    // 根据讨论激烈程度调整提示词
+    if (discussionIntensity >= 7) {
+      contextualPrompt += `
+
+**高强度讨论提示**：
+- 前面的讨论已经相当激烈，请提供更有力的论据来支持你的观点
+- 可以适当反驳前面的不同意见，但保持专业和尊重
+- 避免情绪化的表达，用事实和逻辑来说服对方`;
+    } else if (discussionIntensity >= 4) {
+      contextualPrompt += `
+
+**中等强度讨论提示**：
+- 讨论正在升温，请提供更有深度的观点
+- 可以对前面的观点进行补充或提出不同见解
+- 保持客观中立的态度，用理性分析来支持你的论点`;
+    } else {
+      contextualPrompt += `
+
+**初始讨论提示**：
+- 这是辩论的早期阶段，请清晰地陈述你的核心观点
+- 为辩论设定基调，提供有价值的见解
+- 保持开放和建设性的态度`;
+    }
+
+    // 根据辩论轮次调整策略
+    if (currentRound === 1) {
+      contextualPrompt += `
+
+**首轮策略**：
+- 清晰陈述你的核心立场和主要论点
+- 为后续辩论奠定基础
+- 避免过早地反驳他人（这是开场陈述阶段）`;
+    } else if (currentRound < totalRounds) {
+      contextualPrompt += `
+
+**中期辩论策略**：
+- 针对前面参与者的观点进行回应
+- 强化你的论点，适当反驳不同意见
+- 提供新的证据或角度来支持你的立场`;
+    } else {
+      contextualPrompt += `
+
+**总结阶段策略**：
+- 总结你的核心论点和对整个辩论的贡献
+- 回应最重要的反驳意见
+- 提供最终的观点和结论性陈述`;
+    }
+
+    // 如果有前面的讨论内容，添加上下文
+    if (previousMessages.length > 0) {
+      contextualPrompt += `
+
+**前面的讨论要点**：
+${this.extractDiscussionKeyPoints(previousMessages)}
+
+请针对以上讨论内容，提供你的回应：`;
+    }
+
+    return contextualPrompt;
+  }
+
+  /**
+   * 提取讨论的关键要点
+   */
+  private extractDiscussionKeyPoints(messages: Message[]): string {
+    const keyPoints: string[] = [];
+    const assistantMessages = messages.filter(m => m.role === MessageRole.ASSISTANT);
+
+    // 只取最近5条消息的要点
+    const recentMessages = assistantMessages.slice(-5);
+
+    for (const message of recentMessages) {
+      if (message.content && message.senderName) {
+        // 简化内容，提取要点
+        const content = message.content
+          .replace(/\*\*([^*]+)\*\*/g, '$1') // 移除加粗标记
+          .replace(/\*([^*]+)\*/g, '$1')     // 移除斜体标记
+          .replace(/#{1,6}\s*/g, '')          // 移除标题标记
+          .trim();
+
+        if (content.length > 20) {
+          // 取内容的前100个字符作为要点
+          const point = content.length > 100 ? content.substring(0, 100) + '...' : content;
+          keyPoints.push(`- ${message.senderName}: ${point}`);
+        }
+      }
+    }
+
+    return keyPoints.length > 0 ? keyPoints.join('\n') : '暂无前面的讨论内容';
+  }
+
+  /**
+   * 生成辩论总结
+   */
+  private async generateDebateSummary(
+    debateTopic: string,
+    debateMessages: Message[],
+    participantStats: DebateParticipantStats[]
+  ): Promise<string> {
+    try {
+      // 提取各参与者的关键论点
+      const participantArguments = participantStats.map(stat => {
+        const participant = this.getParticipantFromStats(stat.roleId);
+        return `**${participant?.displayName || '未知参与者'}**：
+- 发言次数：${stat.responseCount}次
+- 平均强度：${stat.averageIntensity.toFixed(1)}/10
+- 主要论点：${stat.keyPoints.slice(0, 3).join('；')}`;
+      }).join('\n\n');
+
+      const summaryPrompt = `请根据以下辩论内容，生成一个专业的辩论总结：
+
+**辩论主题**：${debateTopic}
+
+**参与者表现**：
+${participantArguments}
+
+**完整辩论内容**：
+${debateMessages.map(m => `${m.senderName || '参与者'}: ${m.content}`).join('\n')}
+
+总结要求：
+1. **辩论概述**：简要总结辩论的主要过程和焦点
+2. **各方观点**：概括每个参与者的核心立场和主要论点
+3. **共识与分歧**：指出参与者之间的共识点和主要分歧
+4. **胜负评估**：基于论证质量和说服力，评估哪方的观点更有说服力
+5. **最终结论**：给出对辩论主题的最终见解或建议
+
+请生成一个结构化、客观的辩论总结（300-400字）：`;
+
+      const summaryMessages: SimpleMessage[] = [
+        { role: 'system', content: '你是一个专业的辩论评委和分析专家，擅长分析和总结多角度的辩论内容。' },
+        { role: 'user', content: summaryPrompt }
+      ];
+
+      const apiRequest: APIChatRequest = {
+        messages: summaryMessages,
+        model: this.currentModel,
+        max_tokens: 1500,
+        temperature: 0.3,
+        enable_web: false
+      };
+
+      const apiResponse = await this.apiManager.sendChatRequest(apiRequest);
+      return apiResponse.choices[0]?.message?.content || '辩论总结生成失败';
+
+    } catch (error) {
+      Logger.error('ChatViewModel', `生成辩论总结失败: ${(error as Error).message}`);
+      return '无法生成辩论总结';
+    }
+  }
+
+  /**
+   * 从统计数据获取参与者信息
+   */
+  private getParticipantFromStats(roleId: string): SessionParticipant | undefined {
+    if (!this.currentSession || !isMultiRoleSession(this.currentSession)) {
+      return undefined;
+    }
+
+    const multiRoleSession = this.currentSession as MultiRoleSession;
+    return multiRoleSession.participants.find(p => p.roleId === roleId);
+  }
+
+  /**
+   * 处理辩论式多人讨论
+   */
+  private async handleDebateDiscussion(
+    content: string,
+    assistantMessage: Message,
+    enableWebSearch: boolean
+  ): Promise<void> {
+    if (!this.currentSession || !isMultiRoleSession(this.currentSession)) {
+      Logger.error('ChatViewModel', '辩论讨论失败：当前会话不是多人会话');
+      assistantMessage.content = '抱歉，辩论处理失败';
+      assistantMessage.isLoading = false;
+      return;
+    }
+
+    const multiRoleSession = this.currentSession as MultiRoleSession;
+    const participants = multiRoleSession.participants;
+    const discussionRounds = multiRoleSession.discussionRounds || 3;
+
+    Logger.info('ChatViewModel', `开始辩论讨论：${participants.length}个参与者，${discussionRounds}轮辩论`);
+
+    try {
+      // 移除初始的assistant消息，我们将实时添加每个参与者的消息
+      this.removeMessage(assistantMessage);
+
+      // 第一步：提取辩论主题
+      const debateTopic = this.extractDebateTopic(content);
+      Logger.info('ChatViewModel', `提取辩论主题：${debateTopic}`);
+
+      // 添加辩论开始的提示消息
+      const introMessage = new Message(
+        MessageRole.ASSISTANT,
+        `🎯 **辩论主题**：${debateTopic}\n\n👥 **参与者**：${participants.map(p => p.displayName).join('、')}\n\n💬 **讨论轮数**：${discussionRounds}轮\n\n---\n\n🚀 辩论即将开始，每位参与者将根据自己的角色观点进行讨论...`,
+        this.generateMessageId()
+      );
+      this.addMessage(introMessage);
+      await this.scrollToBottom();
+
+      // 初始化辩论状态
+      let debateStatus = DebateStatus.OPENING_STATEMENT;
+      let currentRound = 0;
+      const allMessages: Message[] = [];
+      const participantStats: DebateParticipantStats[] = participants.map(p => {
+        const stats: DebateParticipantStats = {
+          roleId: p.roleId,
+          responseCount: 0,
+          averageIntensity: 0,
+          keyPoints: [],
+          effectivenessScore: 0
+        };
+        return stats;
+      });
+
+      // 进行多轮辩论
+      for (let round = 1; round <= discussionRounds; round++) {
+        currentRound = round;
+
+        // 更新辩论状态
+        if (round === 1) {
+          debateStatus = DebateStatus.OPENING_STATEMENT;
+        } else if (round < discussionRounds) {
+          debateStatus = DebateStatus.REBUTTAL;
+        } else {
+          debateStatus = DebateStatus.CLOSING_STATEMENT;
+        }
+
+        // 添加轮次分隔消息
+        const roundMessage = new Message(
+          MessageRole.ASSISTANT,
+          `🔹 **第${round}轮${this.getDebateStageName(debateStatus)}**`,
+          this.generateMessageId()
+        );
+        this.addMessage(roundMessage);
+        await this.scrollToBottom();
+
+        // 每个参与者依次发言
+        for (const participant of participants) {
+          try {
+            // 添加"思考中"状态消息
+            const thinkingMessage = new Message(
+              MessageRole.ASSISTANT,
+              `正在思考中...`,
+              this.generateMessageId()
+            );
+            thinkingMessage.senderName = participant.displayName;
+            thinkingMessage.senderRoleId = participant.roleId;
+            thinkingMessage.senderAvatar = participant.avatar;
+            thinkingMessage.isLoading = true;
+            this.addMessage(thinkingMessage);
+            await this.scrollToBottom();
+
+            // 分析当前讨论激烈程度
+            const currentIntensity = this.analyzeDiscussionIntensity(allMessages);
+
+            // 生成带上下文的提示词
+            const contextualPrompt = this.generateContextualDebatePrompt(
+              participant,
+              debateTopic,
+              round,
+              discussionRounds,
+              currentIntensity,
+              allMessages
+            );
+
+            // 构建消息历史
+            const messages = this.buildDebateMessages(content, contextualPrompt, debateTopic, round, allMessages);
+
+            // 获取参与者的回应
+            const response = await this.getParticipantResponse(messages, participant);
+
+            // 移除"思考中"消息
+            this.removeMessage(thinkingMessage);
+
+            // 创建参与者的实际发言消息
+            const participantMessage = new Message(
+              MessageRole.ASSISTANT,
+              response,
+              this.generateMessageId()
+            );
+            participantMessage.senderName = participant.displayName;
+            participantMessage.senderRoleId = participant.roleId;
+            participantMessage.senderAvatar = participant.avatar;
+
+            // 实时添加消息到界面
+            this.addMessage(participantMessage);
+            allMessages.push(participantMessage);
+            await this.scrollToBottom();
+
+            // 更新参与者统计
+            const stats = participantStats.find(s => s.roleId === participant.roleId);
+            if (stats) {
+              stats.responseCount++;
+              stats.averageIntensity = (stats.averageIntensity * (stats.responseCount - 1) + currentIntensity) / stats.responseCount;
+
+              // 提取关键论点
+              const keyPoints = this.extractKeyPointsFromResponse(response);
+              stats.keyPoints.push(...keyPoints);
+              stats.effectivenessScore = stats.averageIntensity * stats.responseCount;
+            }
+
+            // 添加小延迟避免API限流
+            await this.delay(800);
+
+          } catch (error) {
+            Logger.error('ChatViewModel', `参与者${participant.displayName}第${round}轮辩论失败: ${(error as Error).message}`);
+
+            // 移除可能存在的"思考中"消息
+            const thinkingMessages = this.messages.filter(m =>
+              m.senderRoleId === participant.roleId && m.isLoading
+            );
+            thinkingMessages.forEach(m => this.removeMessage(m));
+
+            // 添加错误消息
+            const errorMessage = new Message(
+              MessageRole.ASSISTANT,
+              `抱歉，我暂时无法参与讨论。`,
+              this.generateMessageId()
+            );
+            errorMessage.senderName = participant.displayName;
+            errorMessage.senderRoleId = participant.roleId;
+            errorMessage.senderAvatar = participant.avatar;
+            this.addMessage(errorMessage);
+            await this.scrollToBottom();
+          }
+        }
+      }
+
+      // 生成辩论总结
+      debateStatus = DebateStatus.SUMMARY;
+      const summaryLoadingMessage = new Message(
+        MessageRole.ASSISTANT,
+        `🏆 正在分析辩论内容并生成总结...`,
+        this.generateMessageId()
+      );
+      summaryLoadingMessage.isLoading = true;
+      this.addMessage(summaryLoadingMessage);
+      await this.scrollToBottom();
+
+      const summary = await this.generateDebateSummary(debateTopic, allMessages, participantStats);
+
+      // 移除总结加载消息
+      this.removeMessage(summaryLoadingMessage);
+
+      // 添加最终总结消息
+      const summaryMessage = new Message(
+        MessageRole.ASSISTANT,
+        `🏆 **辩论总结**\n\n${summary}`,
+        this.generateMessageId()
+      );
+      this.addMessage(summaryMessage);
+      await this.scrollToBottom();
+
+      Logger.info('ChatViewModel', `辩论讨论完成，共${discussionRounds}轮`);
+
+    } catch (error) {
+      const errorMessage = (error as Error).message;
+      Logger.error('ChatViewModel', `辩论讨论失败: ${errorMessage}`);
+
+      // 添加错误消息
+      const errorMsg = new Message(
+        MessageRole.ASSISTANT,
+        `❌ 抱歉，辩论过程中出现错误：${errorMessage}`,
+        this.generateMessageId()
+      );
+      this.addMessage(errorMsg);
+      await this.scrollToBottom();
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * 获取辩论阶段名称
+   */
+  private getDebateStageName(status: DebateStatus): string {
+    switch (status) {
+      case DebateStatus.OPENING_STATEMENT:
+        return '（开场陈述）';
+      case DebateStatus.REBUTTAL:
+        return '（反驳辩论）';
+      case DebateStatus.CLOSING_STATEMENT:
+        return '（总结陈述）';
+      default:
+        return '';
+    }
+  }
+
+  /**
+   * 构建辩论消息历史
+   */
+  private buildDebateMessages(
+    userContent: string,
+    systemPrompt: string,
+    debateTopic: string,
+    currentRound: number,
+    previousMessages: Message[]
+  ): SimpleMessage[] {
+    const messages: SimpleMessage[] = [];
+
+    // 添加系统提示词
+    messages.push({
+      role: 'system',
+      content: systemPrompt
+    });
+
+    // 添加用户原始问题和辩论主题
+    messages.push({
+      role: 'user',
+      content: `**用户问题**：${userContent}
+
+**辩论主题**：${debateTopic}
+
+**当前轮次**：第${currentRound}轮
+
+请基于你的角色定位和前面的讨论内容，提供有针对性的辩论观点。`
+    });
+
+    return messages;
+  }
+
+  /**
+   * 从回应中提取关键论点
+   */
+  private extractKeyPointsFromResponse(response: string): string[] {
+    const keyPoints: string[] = [];
+
+    // 按句子分割
+    const sentences = response.split(/[。！？!?.]/).filter(s => s.trim().length > 10);
+
+    // 提取包含论点标志的句子
+    const argumentKeywords = ['认为', '观点', '立场', '理由', '因为', '所以', '首先', '其次', '最后', 'believe', 'think', 'argue', 'because', 'therefore', 'first', 'second', 'finally'];
+
+    for (const sentence of sentences) {
+      const cleanSentence = sentence.trim();
+      if (cleanSentence.length > 15 && cleanSentence.length < 100) {
+        // 检查是否包含论点关键词
+        const hasArgumentKeyword = argumentKeywords.some(keyword =>
+          cleanSentence.toLowerCase().includes(keyword.toLowerCase())
+        );
+
+        if (hasArgumentKeyword || cleanSentence.includes('：') || cleanSentence.includes(':')) {
+          keyPoints.push(cleanSentence);
+        }
+      }
+    }
+
+    // 如果没有找到明确的论点，取前两个有意义的句子
+    if (keyPoints.length === 0 && sentences.length > 0) {
+      keyPoints.push(...sentences.slice(0, 2).map(s => s.trim()));
+    }
+
+    return keyPoints.slice(0, 3); // 最多返回3个关键论点
+  }
+
+  /**
+   * 生成消息ID
+   */
+  private generateMessageId(): string {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+  }
+
+  /**
+   * 延迟函数
+   */
+  private async delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**
@@ -950,8 +1732,11 @@ export class ChatViewModel {
     this.isLoading = true;
 
     try {
-      // 根据是否启用深度思考选择不同的处理方式
-      if (currentFeatures.enableDeepThinking) {
+      // 检查是否为多人会话，优先处理多人会话逻辑
+      if (this.currentSession && isMultiRoleSession(this.currentSession)) {
+        Logger.info('ChatViewModel', '检测到多人会话，启动辩论式讨论');
+        await this.handleDebateDiscussion(content, assistantMessage, currentFeatures.enableWebSearch);
+      } else if (currentFeatures.enableDeepThinking) {
         Logger.info('ChatViewModel', '启用深度思考模式');
         await this.handleDeepThinking(content, assistantMessage, currentFeatures.enableWebSearch);
       } else {
@@ -1814,13 +2599,6 @@ export class ChatViewModel {
   }
 
   /**
-   * 延迟函数
-   */
-  private async delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  /**
    * 强制停止所有音频
    */
   private async forceStopAllAudio(): Promise<void> {
@@ -2157,13 +2935,20 @@ export class ChatViewModel {
    * 创建多人会话
    */
   async createNewMultiRoleSession(participantPrompts: SystemPrompt[]): Promise<Session | null> {
+    return await this.createNewMultiRoleSessionWithRounds(participantPrompts, 3); // 默认3轮讨论
+  }
+
+  /**
+   * 创建多人会话（带讨论轮数）
+   */
+  async createNewMultiRoleSessionWithRounds(participantPrompts: SystemPrompt[], discussionRounds: number = 3): Promise<Session | null> {
     if (!participantPrompts || participantPrompts.length === 0) {
       Logger.warn('ChatViewModel', '多人会话创建请求缺少参与者');
       return null;
     }
 
     try {
-      Logger.info('ChatViewModel', `创建多人会话，参与者数量: ${participantPrompts.length}`);
+      Logger.info('ChatViewModel', `创建多人会话，参与者数量: ${participantPrompts.length}, 讨论轮数: ${discussionRounds}`);
 
       if (this.currentSession) {
         await this.saveMessages();
@@ -2171,23 +2956,24 @@ export class ChatViewModel {
 
       await this.stopAllAudio();
 
-      const newSession = await this.sessionManager.createMultiRoleSession(participantPrompts);
+      const newSession = await this.sessionManager.createMultiRoleSession(participantPrompts, discussionRounds);
 
       this.currentSession = newSession;
       this.messages = [];
       await this.loadSessions();
 
       const participantNames = participantPrompts.map(participant => participant.name).join(', ');
-      Logger.info('ChatViewModel', `多人会话创建成功: ${newSession.id}, 参与者: ${participantNames}`);
+      Logger.info('ChatViewModel', `多人会话创建成功: ${newSession.id}, 参与者: ${participantNames}, 讨论轮数: ${discussionRounds}`);
       return newSession;
 
     } catch (error) {
       const errorContext = new ErrorContext();
       errorContext.module = 'ChatViewModel';
-      errorContext.function = 'createNewMultiRoleSession';
+      errorContext.function = 'createNewMultiRoleSessionWithRounds';
       errorContext.additionalInfo = JSON.stringify({
         participantCount: participantPrompts.length,
-        participantIds: participantPrompts.map(participant => participant.id)
+        participantIds: participantPrompts.map(participant => participant.id),
+        discussionRounds: discussionRounds
       });
 
       const errorManager = ErrorManager.getInstance();
@@ -2544,6 +3330,42 @@ export class ChatViewModel {
     } catch (error) {
       Logger.error('ChatViewModel', `销毁ViewModel失败: ${(error as Error).message}`);
     }
+  }
+
+  //=================== 辩论相关辅助方法 ===================
+
+  /**
+   * 添加消息到消息列表
+   */
+  private addMessage(message: Message): void {
+    this.messages.push(message);
+    Logger.debug('ChatViewModel', `添加消息: ${message.senderName || 'System'} - ${message.content.substring(0, 50)}...`);
+  }
+
+  /**
+   * 从消息列表中移除指定消息
+   */
+  private removeMessage(message: Message): void {
+    const index = this.messages.findIndex(m => m.id === message.id);
+    if (index !== -1) {
+      this.messages.splice(index, 1);
+      Logger.debug('ChatViewModel', `移除消息: ${message.senderName || 'System'} - ${message.content.substring(0, 50)}...`);
+    }
+  }
+
+  /**
+   * 滚动到消息列表底部
+   */
+  private async scrollToBottom(): Promise<void> {
+    // 使用延迟确保UI更新完成后再滚动
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        // 由于这是ViewModel，具体的滚动需要通过回调或事件通知UI层
+        // 这里使用简单的延迟模拟，实际使用中页面会自动检测新消息并滚动
+        Logger.debug('ChatViewModel', '请求滚动到底部');
+        resolve();
+      }, 200); // 增加延迟确保UI完全更新
+    });
   }
 }
 

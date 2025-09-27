@@ -935,7 +935,7 @@ export struct SideDrawerComponent {
       let newSession: Session | null = null;
 
       if (selection.mode === 'multi') {
-        newSession = await this.chatViewModel.createNewMultiRoleSession(selection.participants);
+        newSession = await this.chatViewModel.createNewMultiRoleSessionWithRounds(selection.participants, selection.discussionRounds || 3);
       } else {
         newSession = await this.chatViewModel.createNewSessionWithPrompt(selection.systemPrompt);
       }

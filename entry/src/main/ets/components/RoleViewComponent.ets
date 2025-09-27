@@ -42,13 +42,11 @@ export struct RoleViewComponent {
   }
   private roleManager: RoleManager = RoleManager.getInstance();
 
-  // 分类选项
+  // 分类选项 - 与角色管理页面保持一致
   private readonly categories: CategoryItem[] = [
     { id: 'all', name: '全部角色', icon: '🎭' },
     { id: 'professional', name: '专业角色', icon: '💼' },
-    { id: 'creative', name: '创意角色', icon: '🎨' },
-    { id: 'life', name: '生活角色', icon: '🏠' },
-    { id: 'psychology', name: '心理角色', icon: '🧠' },
+    { id: 'character', name: '人物角色', icon: '🎭' },
     { id: 'custom', name: '自定义角色', icon: '⚙️' }
   ];
 

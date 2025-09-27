@@ -247,7 +247,7 @@ export class GLMClient extends BaseAPIClient {
     const glmRequest: GLMRequestBody = {
       model: request.model || this.config.model,
       messages: request.messages,
-      max_tokens: request.max_tokens || 1000,
+      max_tokens: request.max_tokens || 1500,
       temperature: request.temperature || 0.7,
       stream: request.stream || false
     };

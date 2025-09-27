@@ -599,6 +599,7 @@ export interface SessionData {
 export interface MultiRoleSessionData extends SessionData {
   participants: SessionParticipantData[];
   messages: MessageData[];
+  discussionRounds?: number; // 讨论轮数，1-5轮
 }
 
 // 会话信息模型
@@ -712,6 +713,7 @@ export class Session {
 export class MultiRoleSession extends Session {
   @Trace participants: SessionParticipant[] = [];
   @Trace messages: Message[] = [];
+  @Trace discussionRounds: number = 3; // 默认3轮讨论
 
   constructor(
     name: string = '',
@@ -719,11 +721,13 @@ export class MultiRoleSession extends Session {
     messages: Message[] = [],
     systemPromptId: string | null = null,
     roleId?: string,
-    id?: string
+    id?: string,
+    discussionRounds: number = 3
   ) {
     super(name, systemPromptId, roleId, id);
     this.participants = participants;
     this.messages = messages;
+    this.discussionRounds = Math.max(1, Math.min(5, discussionRounds)); // 限制在1-5轮
   }
 
   static fromObject(data: MultiRoleSessionData): MultiRoleSession {
@@ -735,7 +739,8 @@ export class MultiRoleSession extends Session {
       messages,
       data.systemPromptId ?? null,
       data.roleId,
-      data.id
+      data.id,
+      data.discussionRounds || 3
     );
     session.createdAt = data.createdAt || Date.now();
     session.updatedAt = data.updatedAt || session.createdAt;
@@ -754,7 +759,8 @@ export class MultiRoleSession extends Session {
       systemPromptId: base.systemPromptId,
       roleId: base.roleId,
       participants: this.participants.map(participant => participant.toObject()),
-      messages: this.messages.map(message => message.toObject())
+      messages: this.messages.map(message => message.toObject()),
+      discussionRounds: this.discussionRounds
     };
   }
 
@@ -767,10 +773,139 @@ export function isMultiRoleSession(session: Session | MultiRoleSession): boolean
   return (session as MultiRoleSession).participants !== undefined;
 }
 
+//=================== 辩论系统相关模型 ===================
+
+// 辩论状态枚举
+export enum DebateStatus {
+  TOPIC_EXTRACTION = 'topic_extraction',
+  OPENING_STATEMENT = 'opening_statement',
+  REBUTTAL = 'rebuttal',
+  CLOSING_STATEMENT = 'closing_statement',
+  SUMMARY = 'summary',
+  COMPLETED = 'completed'
+}
+
+// 辩论参与者统计
+export interface DebateParticipantStats {
+  roleId: string;
+  responseCount: number;
+  averageIntensity: number;
+  keyPoints: string[];
+  effectivenessScore: number;
+}
+
+// 辩论会话数据
+export interface DebateSessionData extends MultiRoleSessionData {
+  debateTopic?: string;
+  debateStatus: DebateStatus;
+  currentRound: number;
+  participantStats: DebateParticipantStats[];
+  discussionIntensity: number;
+  summaryGenerated: boolean;
+}
+
+@ObservedV2
+export class DebateSession extends MultiRoleSession {
+  @Trace debateTopic: string = '';
+  @Trace debateStatus: DebateStatus = DebateStatus.TOPIC_EXTRACTION;
+  @Trace currentRound: number = 0;
+  @Trace participantStats: DebateParticipantStats[] = [];
+  @Trace discussionIntensity: number = 0;
+  @Trace summaryGenerated: boolean = false;
+
+  constructor(
+    name: string = '',
+    participants: SessionParticipant[] = [],
+    messages: Message[] = [],
+    systemPromptId: string | null = null,
+    roleId?: string,
+    id?: string,
+    discussionRounds: number = 3
+  ) {
+    super(name, participants, messages, systemPromptId, roleId, id, discussionRounds);
+    this.debateStatus = DebateStatus.TOPIC_EXTRACTION;
+    this.currentRound = 0;
+    this.participantStats = participants.map(p => {
+      const stats: DebateParticipantStats = {
+        roleId: p.roleId,
+        responseCount: 0,
+        averageIntensity: 0,
+        keyPoints: [],
+        effectivenessScore: 0
+      };
+      return stats;
+    });
+    this.discussionIntensity = 0;
+    this.summaryGenerated = false;
+  }
+
+  static fromObject(data: DebateSessionData): DebateSession {
+    const participants = (data.participants || []).map(participant => SessionParticipant.fromObject(participant));
+    const messages = (data.messages || []).map(message => Message.fromObject(message));
+    const session = new DebateSession(
+      data.name || '',
+      participants,
+      messages,
+      data.systemPromptId ?? null,
+      data.roleId,
+      data.id,
+      data.discussionRounds || 3
+    );
+    session.debateTopic = data.debateTopic || '';
+    session.debateStatus = data.debateStatus || DebateStatus.TOPIC_EXTRACTION;
+    session.currentRound = data.currentRound || 0;
+    session.participantStats = data.participantStats || [];
+    session.discussionIntensity = data.discussionIntensity || 0;
+    session.summaryGenerated = data.summaryGenerated || false;
+    session.createdAt = data.createdAt || Date.now();
+    session.updatedAt = data.updatedAt || session.createdAt;
+    session.messageCount = data.messageCount || messages.length;
+    return session;
+  }
+
+  override toObject(): DebateSessionData {
+    const base = super.toObject();
+    return {
+      id: base.id,
+      name: base.name,
+      createdAt: base.createdAt,
+      updatedAt: base.updatedAt,
+      messageCount: base.messageCount,
+      systemPromptId: base.systemPromptId,
+      roleId: base.roleId,
+      participants: base.participants,
+      messages: base.messages,
+      discussionRounds: base.discussionRounds,
+      debateTopic: this.debateTopic,
+      debateStatus: this.debateStatus,
+      currentRound: this.currentRound,
+      participantStats: this.participantStats,
+      discussionIntensity: this.discussionIntensity,
+      summaryGenerated: this.summaryGenerated
+    };
+  }
+
+  updateParticipantStats(roleId: string, intensity: number, keyPoints: string[]): void {
+    const stats = this.participantStats.find(s => s.roleId === roleId);
+    if (stats) {
+      stats.responseCount++;
+      stats.averageIntensity = (stats.averageIntensity * (stats.responseCount - 1) + intensity) / stats.responseCount;
+      stats.keyPoints.push(...keyPoints);
+      stats.effectivenessScore = stats.averageIntensity * stats.responseCount;
+    }
+  }
+
+  getDiscussionIntensity(): number {
+    if (this.participantStats.length === 0) return 0;
+    const totalIntensity = this.participantStats.reduce((sum, stats) => sum + stats.averageIntensity, 0);
+    return totalIntensity / this.participantStats.length;
+  }
+}
+
 // WebSocket消息数据类型联合
-export type WSMessageData = 
+export type WSMessageData =
   | SessionCreateData
-  | SessionSwitchData 
+  | SessionSwitchData
   | SessionCloseData
   | SessionListData
   | SessionCreatedData

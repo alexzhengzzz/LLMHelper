@@ -301,6 +301,7 @@ export class WebSocketService {
         if (typeof value === 'string') {
           messageStr = value;
         } else if (value instanceof ArrayBuffer) {
+          // 使用String.fromCharCode配合Uint8Array处理UTF-8编码的WebSocket消息
           const uint8Array = new Uint8Array(value);
           messageStr = '';
           for (let i = 0; i < uint8Array.length; i++) {

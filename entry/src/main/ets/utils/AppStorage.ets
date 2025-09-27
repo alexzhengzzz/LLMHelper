@@ -3,6 +3,7 @@ import { common } from '@kit.AbilityKit';
 import { Message, MessageRole, ThinkingStatus, SystemPrompt, SystemPromptData, Session, SessionData, MessageData, ThinkingStepData, MultiRoleSession, MultiRoleSessionData } from '../models/ChatModels';
 import { Logger } from './Logger';
 import { DefaultPrompts } from '../data/DefaultPrompts';
+import { PromptsConfigManager } from './PromptsConfigManager';
 
 const MESSAGES_KEY = 'chat_messages';
 const SYSTEM_PROMPTS_KEY = 'system_prompts';
@@ -475,7 +476,8 @@ export class AppStorage {
 
   // 获取默认系统提示词
   static getDefaultSystemPrompts(): SystemPrompt[] {
-    return DefaultPrompts.getAllPrompts();
+    const manager = PromptsConfigManager.getInstance();
+    return manager.getAllPromptsSync();
   }
 
   // 初始化默认系统提示词
@@ -1082,7 +1084,8 @@ export class AppStorage {
             Logger.warn('AppStorage', `修复消息 ${index} 的content类型: ${typeof rawMsg.content} -> string`);
           }
 
-          const isValidRole = rawMsg.role && Object.values(MessageRole).includes(rawMsg.role as MessageRole);
+          const validRoles = [MessageRole.USER, MessageRole.ASSISTANT, MessageRole.SYSTEM];
+          const isValidRole = rawMsg.role && validRoles.includes(rawMsg.role as MessageRole);
           const messageRole = isValidRole ? rawMsg.role as MessageRole : MessageRole.USER;
 
           const messageData: MessageData = {

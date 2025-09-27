@@ -1,6 +1,6 @@
 import { router, promptAction, curves, display } from '@kit.ArkUI';
 import { ChatViewModel } from '../viewmodels/ChatViewModel';
-import { Message, MessageRole, SystemPrompt, ThinkingStep, ThinkingStatus } from '../models/ChatModels';
+import { Message, MessageRole, SystemPrompt, ThinkingStep, ThinkingStatus, MultiRoleSession, SessionParticipant, Session, isMultiRoleSession } from '../models/ChatModels';
 import { inputMethod } from '@kit.IMEKit';
 import { ModelSelectorComponent } from '../components/ModelSelectorComponent';
 import { SystemPromptComponent } from '../components/SystemPromptComponent';
@@ -553,6 +553,8 @@ struct ChatPage {
         if (this.chatViewModel.isLoading && this.chatViewModel.messages.length === 0) {
           this.buildLoadingIndicator()
         } else {
+          // 辩论信息（仅在多人会话时显示）
+          this.buildDebateInfo()
           // 聊天消息列表
           this.buildMessageList()
         }
@@ -1022,6 +1024,76 @@ struct ChatPage {
   }
 
   @Builder
+  buildDebateInfo() {
+    if (this.chatViewModel.currentSession && isMultiRoleSession(this.chatViewModel.currentSession)) {
+
+      Column() {
+        // 辩论信息卡片
+        Row() {
+          Column() {
+            Text('🎯 辩论进行中')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.primary_color'))
+
+            Text(`${(this.chatViewModel.currentSession as MultiRoleSession).participants.length}名参与者 · ${(this.chatViewModel.currentSession as MultiRoleSession).discussionRounds}轮辩论`)
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+              .margin({ top: 2 })
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+
+          // 参与者头像
+          Row({ space: -8 }) {
+            ForEach((this.chatViewModel.currentSession as MultiRoleSession).participants.slice(0, 4), (participant: SessionParticipant) => {
+              if (participant.avatar) {
+                Image(participant.avatar)
+                  .width(24)
+                  .height(24)
+                  .borderRadius(12)
+                  .border({ width: 2, color: $r('app.color.background_color') })
+              } else {
+                Text(this.getParticipantEmoji(participant.displayName))
+                  .fontSize(12)
+                  .width(24)
+                  .height(24)
+                  .borderRadius(12)
+                  .backgroundColor($r('app.color.surface_color'))
+                  .textAlign(TextAlign.Center)
+                  .border({ width: 2, color: $r('app.color.background_color') })
+              }
+            })
+
+            if ((this.chatViewModel.currentSession as MultiRoleSession).participants.length > 4) {
+              Text(`+${(this.chatViewModel.currentSession as MultiRoleSession).participants.length - 4}`)
+                .fontSize(10)
+                .width(24)
+                .height(24)
+                .borderRadius(12)
+                .backgroundColor($r('app.color.border_color'))
+                .fontColor($r('app.color.text_secondary'))
+                .textAlign(TextAlign.Center)
+                .border({ width: 2, color: $r('app.color.background_color') })
+            }
+          }
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor($r('app.color.primary_color'))
+        .borderRadius(8)
+        .border({
+          width: 1,
+          color: $r('app.color.primary_color')
+        })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+    }
+  }
+
+  @Builder
   buildMessageList() {
     List({ space: 8, scroller: this.listScroller }) {
       ForEach(this.chatViewModel.messages, (message: Message, index: number) => {
@@ -1062,6 +1134,76 @@ struct ChatPage {
     return this.currentSessionRole?.name || this.chatViewModel.getCurrentSessionSystemPrompt()?.name || 'AI助手';
   }
 
+  /**
+   * 获取参与者表情符号
+   */
+  private getParticipantEmoji(displayName: string): string {
+    const emojiMap: Record<string, string> = {
+      '程序员': '👨‍💻',
+      '产品经理': '👩‍💼',
+      '设计师': '🎨',
+      '测试工程师': '🔍',
+      '项目经理': '📊',
+      '数据分析师': '📈',
+      '运营': '📢',
+      '市场': '📱',
+      '销售': '💰',
+      '客服': '🎧',
+      '老师': '👩‍🏫',
+      '学生': '🎓',
+      '医生': '👨‍⚕️',
+      '律师': '⚖️',
+      '会计': '🧮',
+      '作家': '✍️',
+      '记者': '📝',
+      '翻译': '🌐',
+      '心理咨询师': '🧠',
+      '健身教练': '💪',
+      '营养师': '🥗',
+      '摄影师': '📸',
+      '音乐家': '🎵',
+      '画家': '🖼️',
+      '厨师': '👨‍🍳',
+      '司机': '🚗',
+      '工程师': '🔧',
+      '科学家': '🔬',
+      '研究员': '🔍',
+      '教授': '🎓',
+      '专家': '🎯',
+      '顾问': '💼',
+      '分析师': '📊',
+      '总监': '👔',
+      '主管': '📋',
+      '经理': '💼',
+      '总裁': '🏢',
+      'CEO': '🏢',
+      'CTO': '💻',
+      'CFO': '💰',
+      'COO': '⚙️',
+      '创始人': '🚀',
+      '创业者': '🚀',
+      '投资者': '💰',
+      '天使投资人': '👼',
+      '风险投资': '💼'
+    };
+
+    // 根据角色名称匹配表情符号
+    const emojiKeys = Object.keys(emojiMap);
+    for (let i = 0; i < emojiKeys.length; i++) {
+      const key = emojiKeys[i];
+      const emoji = emojiMap[key];
+      if (displayName.includes(key)) {
+        return emoji;
+      }
+    }
+
+    // 默认表情符号
+    const defaultEmojis = ['👤', '🧑', '👨', '👩', '🧑‍💼', '👩‍💼', '👨‍💻', '👩‍💻'];
+    const index = displayName.length % defaultEmojis.length;
+    return defaultEmojis[index];
+  }
+
+  
   // Helper method to get role icon for message display
   private getMessageRoleIcon(): string {
     return this.currentSessionRole?.roleIcon || '';
