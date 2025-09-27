@@ -428,12 +428,12 @@ struct SettingsPage {
 
   private getAISettings(): SettingItem[] {
     return [
-      {
-        title: 'API调用模式',
-        subtitle: APIManager.getModeDescription(this.currentAPIMode),
-        type: 'switch',
-        value: this.currentAPIMode === APIMode.DIRECT_CALL
-      },
+      // {
+      //   title: 'API调用模式',
+      //   subtitle: APIManager.getModeDescription(this.currentAPIMode),
+      //   type: 'switch',
+      //   value: this.currentAPIMode === APIMode.DIRECT_CALL
+      // },
       {
         title: 'API密钥管理',
         subtitle: '直连模式密钥配置',
