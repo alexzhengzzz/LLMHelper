@@ -305,8 +305,21 @@ export class MemoryManager {
       const memories = await this.getAllMemories();
       const lowerKeyword = keyword.toLowerCase().trim();
 
+      // 智能语义映射：将自然语言问题映射到关键词
+      const semanticMappings = this.getSemanticMappings();
+
+      // 查找相关的搜索词
+      let searchTerms: string[] = [lowerKeyword];
+
+      // 检查是否有语义映射
+      for (const [pattern, terms] of Object.entries(semanticMappings)) {
+        if (lowerKeyword.includes(pattern)) {
+          searchTerms = [...searchTerms, ...terms];
+        }
+      }
+
       // 将关键词按空格分割成多个词汇进行搜索
-      const keywords = lowerKeyword.split(/\s+/).filter(k => k.length > 0);
+      const keywords = searchTerms.flatMap(term => term.split(/\s+/)).filter(k => k.length > 0);
 
       const matchedMemories = memories.filter(memory => {
         const lowerContent = memory.content.toLowerCase();
@@ -322,11 +335,88 @@ export class MemoryManager {
         return hasMatch;
       });
 
-      Logger.debug('MemoryManager', `搜索关键词 "${keyword}" (分解为: ${keywords.join(', ')}) 找到 ${matchedMemories.length} 个记忆碎片`);
+      // 按匹配度和重要性排序
+      matchedMemories.sort((a, b) => {
+        const aScore = this.calculateMatchScore(a, keywords);
+        const bScore = this.calculateMatchScore(b, keywords);
+        if (aScore !== bScore) return bScore - aScore;
+
+        // 匹配度相同时，按重要性排序
+        const aImportance = this.getImportanceWeight(a.importance);
+        const bImportance = this.getImportanceWeight(b.importance);
+        if (aImportance !== bImportance) return bImportance - aImportance;
+
+        // 最后按使用频率排序
+        return b.usageCount - a.usageCount;
+      });
+
+      Logger.debug('MemoryManager', `搜索关键词 "${keyword}" (扩展为: ${keywords.join(', ')}) 找到 ${matchedMemories.length} 个记忆碎片`);
       return matchedMemories;
     } catch (error) {
       Logger.error('MemoryManager', `搜索记忆碎片失败: ${error}`);
       return [];
+    }
+  }
+
+  /**
+   * 语义映射：将自然语言问题映射到相关关键词
+   */
+  private getSemanticMappings(): Record<string, string[]> {
+    return {
+      '名字': ['名字', '姓名', '称呼', '叫我什么', '怎么称呼', '我是谁'],
+      '你叫': ['名字', '姓名', '称呼', '助手', 'ai', '机器人'],
+      '我叫': ['名字', '姓名', '用户', '主人'],
+      '称呼': ['名字', '姓名', '叫我什么', '怎么称呼'],
+      '我是': ['名字', '姓名', '用户', '主人'],
+      '用户': ['名字', '姓名', '用户', '主人', '你'],
+      '偏好': ['喜欢', '不喜欢', '偏好', '习惯', '爱好', '兴趣'],
+      '设置': ['配置', '设置', '选项', '参数', '偏好'],
+      '工作': ['工作', '职业', '公司', '职位', '专业'],
+      '学习': ['学习', '教育', '学校', '专业', '课程'],
+      '家庭': ['家庭', '家人', '父母', '子女', '配偶'],
+      '爱好': ['爱好', '兴趣', '喜欢', '娱乐', '运动']
+    };
+  }
+
+  /**
+   * 计算匹配分数
+   */
+  private calculateMatchScore(memory: MemoryFragment, keywords: string[]): number {
+    const lowerContent = memory.content.toLowerCase();
+    const lowerTags = memory.tags.map(tag => tag.toLowerCase());
+
+    let score = 0;
+
+    keywords.forEach(keyword => {
+      // 内容完全匹配得分更高
+      if (lowerContent.includes(keyword)) {
+        score += 2;
+      }
+
+      // 标签匹配
+      if (lowerTags.some(tag => tag.includes(keyword))) {
+        score += 3;
+      }
+
+      // 标题或重要信息匹配
+      if (memory.content.length < 100 && lowerContent.includes(keyword)) {
+        score += 1;
+      }
+    });
+
+    return score;
+  }
+
+  /**
+   * 获取重要性权重
+   */
+  private getImportanceWeight(importance: string): number {
+    switch (importance) {
+      case 'critical': return 4;
+      case 'high': return 3;
+      case 'medium': return 2;
+      case 'low': return 1;
+      default: return 1;
     }
   }
 

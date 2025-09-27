@@ -57,7 +57,7 @@ export class MemoryTool {
 
     const toolDefinition: MCPTool = {
       name: 'search_memories',
-      description: '根据用户的提问，搜索其过往的长期记忆。当需要了解用户的个人信息、偏好、历史对话内容或任何可能存储在长期记忆中的信息时使用此工具',
+      description: '【重要】在回答涉及用户个人信息、偏好设置、历史记录、个人习惯等问题前，必须先使用此工具搜索记忆！使用场景：用户名字、称呼、偏好、设置、历史对话、个人习惯、工作信息、家庭信息、学习偏好等任何需要个性化回答的问题。注意：基础问候和通用知识不需要搜索记忆。',
       inputSchema: schema
     };
     return toolDefinition;

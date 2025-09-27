@@ -17,6 +17,7 @@ import CalculatorTool from './CalculatorTool';
 import AppLauncherTool from './AppLauncherTool';
 import WeatherServiceTool from './WeatherServiceTool';
 import MemoryTool from './MemoryTool';
+import CalendarManagerTool from './CalendarManagerTool';
 import { AppStorage, MCPToolsConfig } from '../utils/AppStorage';
 
 /**
@@ -102,6 +103,21 @@ class MemoryToolExecutor implements LocalToolExecutor {
 }
 
 /**
+ * 日程管理工具执行器
+ */
+class CalendarManagerToolExecutor implements LocalToolExecutor {
+  private calendarManagerTool: CalendarManagerTool;
+
+  constructor(calendarManagerTool: CalendarManagerTool) {
+    this.calendarManagerTool = calendarManagerTool;
+  }
+
+  async execute(request: ToolCallRequest): Promise<ToolCallResult> {
+    return this.calendarManagerTool.execute(request);
+  }
+}
+
+/**
  * 本地工具管理器
  * 管理和执行本地MCP工具
  */
@@ -120,6 +136,7 @@ export class LocalToolManager {
     this.registerAppLauncherTool();
     this.registerWeatherServiceTool();
     this.registerMemoryTool();
+    this.registerCalendarManagerTool();
 
     // 异步初始化工具配置
     this.initializeToolsConfig().then(() => {
@@ -232,6 +249,20 @@ export class LocalToolManager {
     this.toolExecutors.set(toolDefinition.name, executor);
 
     Logger.info('LocalToolManager', `Memory tool registered: ${toolDefinition.name}`);
+  }
+
+  /**
+   * 注册日程管理工具
+   */
+  private registerCalendarManagerTool(): void {
+    const calendarManagerTool = CalendarManagerTool.getInstance(this.context);
+    const toolDefinition = calendarManagerTool.getToolDefinition();
+
+    this.registeredTools.set(toolDefinition.name, toolDefinition);
+    const executor: LocalToolExecutor = new CalendarManagerToolExecutor(calendarManagerTool);
+    this.toolExecutors.set(toolDefinition.name, executor);
+
+    Logger.info('LocalToolManager', `Calendar manager tool registered: ${toolDefinition.name}`);
   }
 
   /**
@@ -414,6 +445,9 @@ export class LocalToolManager {
       return 'utility';
     }
     if (toolName === 'search_memories' || toolName.startsWith('memory_')) {
+      return 'utility';
+    }
+    if (toolName === 'calendar_manager' || toolName.startsWith('calendar_')) {
       return 'utility';
     }
     return 'custom';
@@ -706,7 +740,7 @@ export class LocalToolManager {
         description: tool.description,
         usageCount: usageCount,
         configurable: true,
-        systemTool: ['calculator', 'app_launcher', 'weather_service', 'search_memories'].includes(toolName)
+        systemTool: ['calculator', 'app_launcher', 'weather_service', 'search_memories', 'calendar_manager'].includes(toolName)
       };
     } catch (error) {
       Logger.error('LocalToolManager', `Failed to get tool config: ${error}`);
