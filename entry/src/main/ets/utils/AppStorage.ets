@@ -376,7 +376,7 @@ export class AppStorage {
       const filteredPrompts = prompts.filter(p => p.id !== promptId);
       await AppStorage.saveSystemPrompts(filteredPrompts);
     } catch (e) {
-      console.error('Failed to delete system prompt.', e);
+      Logger.error('AppStorage', 'Failed to delete system prompt.', e);
     }
   }
 

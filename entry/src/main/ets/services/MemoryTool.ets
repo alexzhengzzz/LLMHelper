@@ -39,25 +39,33 @@ export class MemoryTool {
    * 获取记忆搜索工具定义
    */
   getToolDefinition(): MCPTool {
-    const querySchema: JSONSchema = {
+    const semanticQuerySchema: JSONSchema = {
       type: 'string',
-      description: '搜索关键词，用于在用户的长期记忆中查找相关内容。可以是任何与用户对话相关的词汇、概念或主题',
+      description: "一个详细的问题或描述，用于在用户记忆中进行语义搜索。例如：'用户对编程语言有什么偏好？'或'用户上次提到的关于周末计划的内容'",
       minLength: 1,
-      maxLength: 100
+      maxLength: 200
+    };
+
+    const keywordsSchema: JSONSchema = {
+      type: 'string',
+      description: "从语义查询中提炼出的1-3个核心关键词，以空格分隔。例如：'编程语言 偏好' 或 '周末计划'",
+      minLength: 1,
+      maxLength: 50
     };
 
     const properties: Record<string, JSONSchema> = {} as Record<string, JSONSchema>;
-    properties.query = querySchema;
+    properties.semantic_query = semanticQuerySchema;
+    properties.keywords = keywordsSchema;
 
     const schema: MemoryToolJSONSchema = {
       type: 'object',
       properties: properties,
-      required: ['query']
+      required: ['semantic_query', 'keywords']
     };
 
     const toolDefinition: MCPTool = {
-      name: 'search_memories',
-      description: '【重要】在回答涉及用户个人信息、偏好设置、历史记录、个人习惯等问题前，必须先使用此工具搜索记忆！使用场景：用户名字、称呼、偏好、设置、历史对话、个人习惯、工作信息、家庭信息、学习偏好等任何需要个性化回答的问题。注意：基础问候和通用知识不需要搜索记忆。',
+      name: 'search_user_memories',
+      description: '在需要回忆用户的个人信息、偏好或历史对话时使用此工具。请同时提供详细的`semantic_query`和精简的`keywords`以获得最佳搜索结果。',
       inputSchema: schema
     };
     return toolDefinition;
@@ -69,23 +77,25 @@ export class MemoryTool {
   async execute(request: ToolCallRequest): Promise<ToolCallResult> {
     try {
       const args = request.arguments as ParamType;
-      const query = args.query as string;
+      const semanticQuery = args.semantic_query as string;
+      const keywords = args.keywords as string;
 
-      if (!query || typeof query !== 'string' || query.trim().length === 0) {
-        throw new Error('搜索关键词不能为空');
+      if (!semanticQuery || !keywords || typeof semanticQuery !== 'string' || typeof keywords !== 'string' || semanticQuery.trim().length === 0 || keywords.trim().length === 0) {
+        throw new Error('语义查询和关键词均不能为空');
       }
 
-      const trimmedQuery = query.trim();
-      Logger.info('MemoryTool', `搜索用户记忆，关键词: "${trimmedQuery}"`);
+      const trimmedSemanticQuery = semanticQuery.trim();
+      const trimmedKeywords = keywords.trim();
+      Logger.info('MemoryTool', `搜索用户记忆，语义查询: "${trimmedSemanticQuery}", 关键词: "${trimmedKeywords}"`);
 
-      // 使用MemoryManager搜索记忆
-      const searchResults = await this.memoryManager.searchMemories(trimmedQuery);
+      // 使用MemoryManager搜索记忆，传入两个参数
+      const searchResults = await this.memoryManager.searchMemories(trimmedSemanticQuery, trimmedKeywords);
 
       if (searchResults.length === 0) {
         const noResultsResult: ToolCallResult = {
           content: [{
             type: 'text',
-            text: `未找到与"${trimmedQuery}"相关的记忆内容。用户可能还没有保存相关的记忆信息。`
+            text: `未找到与"${trimmedKeywords}"相关的记忆内容。用户可能还没有保存相关的记忆信息。`
           }]
         };
         return noResultsResult;
@@ -109,7 +119,7 @@ export class MemoryTool {
       const successResult: ToolCallResult = {
         content: [{
           type: 'text',
-          text: `找到 ${searchResults.length} 条与"${trimmedQuery}"相关的记忆：\n\n${formattedMemories}`
+          text: `找到 ${searchResults.length} 条与"${trimmedKeywords}"相关的记忆：\n\n${formattedMemories}`
         }]
       };
 

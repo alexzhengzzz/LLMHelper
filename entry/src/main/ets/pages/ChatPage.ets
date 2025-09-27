@@ -203,8 +203,8 @@ struct ChatPage {
     // 处理路由参数，检查是否需要切换到特定会话
     try {
       const params = router.getParams();
-      if (params && (params as Record<string, Object>).sessionId) {
-        const sessionId = (params as Record<string, Object>).sessionId as string;
+      if (params && (params as Record<string, string>).sessionId) {
+        const sessionId = (params as Record<string, string>).sessionId;
         Logger.info('ChatPage', `检测到路由参数sessionId: ${sessionId}，准备切换会话`);
         
         // 设置目标会话ID，稍后在loadInitialData之后切换

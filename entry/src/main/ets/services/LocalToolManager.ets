@@ -444,7 +444,7 @@ export class LocalToolManager {
     if (toolName === 'weather_service' || toolName.startsWith('weather_')) {
       return 'utility';
     }
-    if (toolName === 'search_memories' || toolName.startsWith('memory_')) {
+    if (toolName === 'search_user_memories' || toolName.startsWith('memory_')) { // 修改工具名称
       return 'utility';
     }
     if (toolName === 'calendar_manager' || toolName.startsWith('calendar_')) {
@@ -740,7 +740,7 @@ export class LocalToolManager {
         description: tool.description,
         usageCount: usageCount,
         configurable: true,
-        systemTool: ['calculator', 'app_launcher', 'weather_service', 'search_memories', 'calendar_manager'].includes(toolName)
+        systemTool: ['calculator', 'app_launcher', 'weather_service', 'search_user_memories', 'calendar_manager'].includes(toolName)
       };
     } catch (error) {
       Logger.error('LocalToolManager', `Failed to get tool config: ${error}`);

@@ -36,6 +36,12 @@ export interface MemoryItemWithoutId {
   lastUsedAt: number;
 }
 
+// 关键词搜索结果接口
+export interface KeywordSearchResult {
+  memory: MemoryFragment;
+  score: number;
+}
+
 /**
  * 记忆管理器 - 负责用户记忆碎片的管理
  */
@@ -348,98 +354,98 @@ export class MemoryManager {
   /**
    * 搜索记忆碎片 - 支持向量搜索和关键词搜索
    */
-  async searchMemories(keyword: string): Promise<MemoryFragment[]> {
+  async searchMemories(semanticQuery: string, keywords: string): Promise<MemoryFragment[]> {
     try {
-      if (!keyword || !keyword.trim()) {
+      if (!semanticQuery?.trim() && !keywords?.trim()) {
         return await this.getAllMemories();
       }
 
       const memories = await this.getAllMemories();
-      const lowerKeyword = keyword.toLowerCase().trim();
       const vectorService = VectorEmbeddingService.getInstance();
+      const config = vectorService.getConfig();
 
-      // 首先尝试向量搜索
-      let vectorSearchResults: VectorSearchResult[] = [];
-
-      try {
-        // 生成查询向量
-        const queryVector = await vectorService.generateEmbedding(lowerKeyword);
-
-        if (queryVector) {
-          Logger.info('MemoryManager', `生成查询向量成功，开始向量搜索，维度: ${queryVector.length}`);
-
-          // 进行向量搜索
-          const filteredMemories = memories
-            .filter(memory => memory.vector && memory.vector.length > 0);
-
-          vectorSearchResults = filteredMemories
-            .map(memory => {
-              const result: VectorSearchResult = {
-                memory: memory,
-                similarity: vectorService.calculateCosineSimilarity(queryVector, memory.vector!)
-              };
-              return result;
-            })
-            .filter(result => result.similarity >= vectorService.getConfig().minSimilarity);
-
-          Logger.info('MemoryManager', `向量搜索找到 ${vectorSearchResults.length} 个候选结果`);
+      // 1. Vector Search
+      let vectorResults: VectorSearchResult[] = [];
+      if (semanticQuery?.trim()) {
+        try {
+          const queryVector = await vectorService.generateEmbedding(semanticQuery);
+          if (queryVector) {
+            Logger.info('MemoryManager', `生成查询向量成功，开始向量搜索，维度: ${queryVector.length}`);
+            const memoriesWithVectors = memories.filter(m => m.vector && m.vector.length > 0);
+            const tempVectorResults: VectorSearchResult[] = memoriesWithVectors
+              .map(memory => {
+                const vectorResult: VectorSearchResult = {
+                  memory: memory,
+                  similarity: vectorService.calculateCosineSimilarity(queryVector, memory.vector!)
+                };
+                return vectorResult;
+              });
+            vectorResults = tempVectorResults.filter(result => result.similarity >= config.minSimilarity);
+            Logger.info('MemoryManager', `向量搜索找到 ${vectorResults.length} 个候选结果`);
+          }
+        } catch (error) {
+          Logger.warn('MemoryManager', `向量搜索失败: ${error}`);
         }
-      } catch (error) {
-        Logger.warn('MemoryManager', `向量搜索失败，降级到关键词搜索: ${error}`);
-        // 向量搜索失败时使用关键词搜索
-        return this.fallbackToKeywordSearch(memories, lowerKeyword);
       }
 
-      // 如果没有向量搜索结果，降级到关键词搜索
-      if (vectorSearchResults.length === 0) {
-        Logger.debug('MemoryManager', '向量搜索无结果，使用关键词搜索');
-        return this.fallbackToKeywordSearch(memories, lowerKeyword);
+      // 2. Keyword Search
+      let keywordResults: KeywordSearchResult[] = [];
+      if (keywords?.trim()) {
+        const expandedKeywords = this.expandKeywords(keywords.toLowerCase().trim());
+        const tempKeywordResults: KeywordSearchResult[] = memories.map(memory => {
+          const keywordResult: KeywordSearchResult = {
+            memory: memory,
+            score: this.calculateKeywordScore(memory, expandedKeywords)
+          };
+          return keywordResult;
+        });
+        keywordResults = tempKeywordResults.filter(result => result.score > 0);
+        Logger.info('MemoryManager', `关键词搜索找到 ${keywordResults.length} 个候选结果`);
       }
 
-      // 混合搜索：结合向量相似度和关键词匹配
-      const hybridResults: HybridSearchResult[] = vectorSearchResults.map(result => {
-        const keywordScore = this.calculateKeywordScore(result.memory, lowerKeyword);
-        const vectorScore = result.similarity;
+      // 3. Hybrid Merge & Rank
+      const resultMap = new Map<string, HybridSearchResult>();
 
-        // 根据配置计算综合得分
-        const config = vectorService.getConfig();
-        const finalScore = config.hybridSearch
-          ? (vectorScore * config.vectorWeight) + (keywordScore * config.keywordWeight)
-          : vectorScore;
-
-        const hybridResult: HybridSearchResult = {
-          memory: result.memory,
-          finalScore: finalScore,
-          vectorScore: vectorScore,
-          keywordScore: keywordScore
-        };
-        return hybridResult;
+      // Add keyword results to map
+      keywordResults.forEach(res => {
+        resultMap.set(res.memory.id, {
+          memory: res.memory,
+          finalScore: res.score * config.keywordWeight,
+          keywordScore: res.score,
+          vectorScore: 0
+        });
       });
 
-      // 按综合得分排序
-      hybridResults.sort((a, b) => {
-        // 首先按综合得分
-        if (a.finalScore !== b.finalScore) return b.finalScore - a.finalScore;
+      // Add vector results, boosting score if also found by keyword search
+      vectorResults.forEach(res => {
+        if (resultMap.has(res.memory.id)) {
+          const existing = resultMap.get(res.memory.id)!;
+          existing.vectorScore = res.similarity;
+          existing.finalScore += res.similarity * config.vectorWeight;
+        } else {
+          resultMap.set(res.memory.id, {
+            memory: res.memory,
+            finalScore: res.similarity * config.vectorWeight,
+            vectorScore: res.similarity,
+            keywordScore: 0
+          });
+        }
+      });
 
-        // 得分相同时，按重要性排序
+      const hybridResults = Array.from(resultMap.values());
+
+      // Sort by final score, then importance, then usage
+      hybridResults.sort((a, b) => {
+        if (a.finalScore !== b.finalScore) return b.finalScore - a.finalScore;
         const aImportance = this.getImportanceWeight(a.memory.importance);
         const bImportance = this.getImportanceWeight(b.memory.importance);
         if (aImportance !== bImportance) return bImportance - aImportance;
-
-        // 最后按使用频率排序
         return b.memory.usageCount - a.memory.usageCount;
       });
 
-      // 限制结果数量
-      const maxResults = vectorService.getConfig().maxResults;
-      const finalResults = hybridResults.slice(0, maxResults).map(result => result.memory);
+      const finalResults = hybridResults.slice(0, config.maxResults).map(result => result.memory);
 
-      Logger.info('MemoryManager',
-        `混合搜索完成，返回 ${finalResults.length} 个结果 ` +
-        `(向量相似度: ${hybridResults[0]?.vectorScore.toFixed(3) || 0}, ` +
-        `关键词得分: ${hybridResults[0]?.keywordScore.toFixed(3) || 0})`
-      );
-
+      Logger.info('MemoryManager', `混合搜索完成，返回 ${finalResults.length} 个结果.`);
       return finalResults;
 
     } catch (error) {
@@ -449,102 +455,46 @@ export class MemoryManager {
   }
 
   /**
-   * 关键词搜索的降级方案
+   * Expands a keyword string into a set of unique search terms using semantic mappings.
    */
-  private fallbackToKeywordSearch(memories: MemoryFragment[], keyword: string): MemoryFragment[] {
-    Logger.debug('MemoryManager', `执行关键词搜索，关键词: "${keyword}"`);
-
-    // 智能语义映射：将自然语言问题映射到关键词
+  private expandKeywords(keyword: string): string[] {
     const semanticMappings = this.getSemanticMappings();
+    let searchTerms = new Set<string>(keyword.split(/\s+/).filter(k => k));
 
-    // 查找相关的搜索词
-    let searchTerms: string[] = [keyword];
-
-    // 检查是否有语义映射
-    const mappingEntries = Object.entries(semanticMappings);
-    for (let i = 0; i < mappingEntries.length; i++) {
-      const pattern = mappingEntries[i][0];
-      const terms = mappingEntries[i][1];
+    Object.entries(semanticMappings).forEach((entry: [string, string[]]) => {
+      const pattern = entry[0];
+      const terms = entry[1];
       if (keyword.includes(pattern)) {
-        for (let j = 0; j < terms.length; j++) {
-          searchTerms.push(terms[j]);
-        }
+        terms.forEach(term => searchTerms.add(term));
       }
-    }
-
-    // 将关键词按空格分割成多个词汇进行搜索
-    let keywords: string[] = [];
-    for (let i = 0; i < searchTerms.length; i++) {
-      const term = searchTerms[i];
-      const splitTerms = term.split(/\s+/);
-      for (let j = 0; j < splitTerms.length; j++) {
-        if (splitTerms[j].length > 0) {
-          keywords.push(splitTerms[j]);
-        }
-      }
-    }
-
-    const matchedMemories = memories.filter(memory => {
-      const lowerContent = memory.content.toLowerCase();
-      const lowerTags = memory.tags.map(tag => tag.toLowerCase());
-
-      // 检查是否有任何一个关键词匹配内容或标签
-      const hasMatch = keywords.some(kw => {
-        const contentMatch = lowerContent.includes(kw);
-        const tagMatch = lowerTags.some(tag => tag.includes(kw));
-        return contentMatch || tagMatch;
-      });
-
-      return hasMatch;
     });
-
-    // 按匹配度和重要性排序
-    matchedMemories.sort((a, b) => {
-      const aScore = this.calculateMatchScore(a, keywords);
-      const bScore = this.calculateMatchScore(b, keywords);
-      if (aScore !== bScore) return bScore - aScore;
-
-      // 匹配度相同时，按重要性排序
-      const aImportance = this.getImportanceWeight(a.importance);
-      const bImportance = this.getImportanceWeight(b.importance);
-      if (aImportance !== bImportance) return bImportance - aImportance;
-
-      // 最后按使用频率排序
-      return b.usageCount - a.usageCount;
-    });
-
-    Logger.debug('MemoryManager', `关键词搜索 "${keyword}" (扩展为: ${keywords.join(', ')}) 找到 ${matchedMemories.length} 个记忆碎片`);
-    return matchedMemories;
+    
+    const expanded = Array.from(searchTerms);
+    Logger.debug('MemoryManager', `关键词 "${keyword}" 扩展为: [${expanded.join(', ')}]`);
+    return expanded;
   }
 
   /**
-   * 计算关键词匹配分数（用于混合搜索）
+   * Calculates a score based on how well a memory's content and tags match a set of keywords.
    */
-  private calculateKeywordScore(memory: MemoryFragment, keyword: string): number {
+  private calculateKeywordScore(memory: MemoryFragment, keywords: string[]): number {
     const lowerContent = memory.content.toLowerCase();
     const lowerTags = memory.tags.map(tag => tag.toLowerCase());
-    const lowerKeyword = keyword.toLowerCase();
+    let score = 0;
 
-    // 计算内容匹配度
-    let contentScore = 0;
-    if (lowerContent.includes(lowerKeyword)) {
-      contentScore += 1;
-    }
+    keywords.forEach(kw => {
+      if (lowerContent.includes(kw)) {
+        score += 1; // Base score for content match
+      }
+      if (lowerTags.some(tag => tag.includes(kw))) {
+        score += 2; // Higher score for tag match
+      }
+    });
 
-    // 计算标签匹配度
-    let tagScore = 0;
-    if (lowerTags.some(tag => tag.includes(lowerKeyword))) {
-      tagScore += 2; // 标签匹配权重更高
-    }
-
-    // 计算完全匹配度（针对短内容）
-    let exactMatchScore = 0;
-    if (memory.content.length < 100 && lowerContent.includes(lowerKeyword)) {
-      exactMatchScore += 0.5;
-    }
-
-    return Math.min(contentScore + tagScore + exactMatchScore, 3) / 3; // 归一化到0-1
+    // Normalize score - simple normalization for demonstration
+    return score > 0 ? Math.min(score / 5, 1.0) : 0;
   }
+
 
   /**
    * 语义映射：将自然语言问题映射到相关关键词
@@ -566,34 +516,7 @@ export class MemoryManager {
     };
   }
 
-  /**
-   * 计算匹配分数
-   */
-  private calculateMatchScore(memory: MemoryFragment, keywords: string[]): number {
-    const lowerContent = memory.content.toLowerCase();
-    const lowerTags = memory.tags.map(tag => tag.toLowerCase());
 
-    let score = 0;
-
-    keywords.forEach(keyword => {
-      // 内容完全匹配得分更高
-      if (lowerContent.includes(keyword)) {
-        score += 2;
-      }
-
-      // 标签匹配
-      if (lowerTags.some(tag => tag.includes(keyword))) {
-        score += 3;
-      }
-
-      // 标题或重要信息匹配
-      if (memory.content.length < 100 && lowerContent.includes(keyword)) {
-        score += 1;
-      }
-    });
-
-    return score;
-  }
 
   /**
    * 获取重要性权重
@@ -1131,4 +1054,5 @@ ${memoryLines.join('\n')}
       return errorStatus;
     }
   }
+
 }
