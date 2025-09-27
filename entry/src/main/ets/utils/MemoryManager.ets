@@ -13,10 +13,15 @@ import {
   MemorySortOptions,
   MemoryOperationResult,
   MemoryInjectionConfig,
-  MemoryItem
+  MemoryItem,
+  MemorySearchResult,
+  HybridSearchResult,
+  VectorSearchResult,
+  VectorMigrationStatus
 } from '../types/MemoryTypes';
 import { AppStorage } from './AppStorage';
 import { Logger } from './Logger';
+import { VectorEmbeddingService } from '../services/VectorEmbeddingService';
 
 export interface MemoryItemWithoutId {
   title: string;
@@ -41,7 +46,27 @@ export class MemoryManager {
   private readonly MEMORY_STATS_KEY = 'memory_stats_cache';
   private memoryStatsListeners: Array<(stats: MemoryStats) => void> = [];
 
-  private constructor() {}
+  private constructor() {
+    // 初始化向量化服务
+    this.initializeVectorService();
+  }
+
+  /**
+   * 初始化向量化服务
+   */
+  private async initializeVectorService(): Promise<void> {
+    try {
+      const vectorService = VectorEmbeddingService.getInstance();
+      const initialized = await vectorService.initialize();
+      if (!initialized) {
+        Logger.warn('MemoryManager', '向量化服务初始化失败，将使用关键词搜索');
+      } else {
+        Logger.info('MemoryManager', '向量化服务初始化成功');
+      }
+    } catch (error) {
+      Logger.warn('MemoryManager', `向量化服务初始化异常: ${error}`);
+    }
+  }
 
   /**
    * 获取单例实例
@@ -89,6 +114,20 @@ export class MemoryManager {
       }
 
       const now = Date.now();
+
+      // 生成向量嵌入
+      let vector: number[] | undefined = undefined;
+      try {
+        const embeddingResult = await VectorEmbeddingService.getInstance().generateEmbedding(request.content.trim());
+        if (embeddingResult !== null) {
+          vector = embeddingResult;
+          Logger.info('MemoryManager', `成功生成记忆向量，维度: ${vector.length}`);
+        }
+      } catch (error) {
+        Logger.warn('MemoryManager', `生成向量失败，将保存为无向量记忆: ${error}`);
+        // 向量生成失败时继续保存，只是没有向量
+      }
+
       const memory: MemoryFragment = {
         id: this.generateId(),
         content: request.content.trim(),
@@ -99,7 +138,8 @@ export class MemoryManager {
         createdAt: now,
         updatedAt: now,
         usageCount: 0,
-        lastUsedAt: 0
+        lastUsedAt: 0,
+        vector: vector
       };
 
       const memories = await this.getAllMemories();
@@ -154,6 +194,18 @@ export class MemoryManager {
           };
         }
         memory.content = request.content.trim();
+
+        // 内容更新时重新生成向量
+        try {
+          const vector = await VectorEmbeddingService.getInstance().generateEmbedding(memory.content);
+          if (vector) {
+            memory.vector = vector;
+            Logger.info('MemoryManager', `内容更新后重新生成向量，维度: ${vector.length}`);
+          }
+        } catch (error) {
+          Logger.warn('MemoryManager', `重新生成向量失败，保留原向量或设为无向量: ${error}`);
+          // 向量生成失败时保留原vector或设为undefined
+        }
       }
 
       if (request.tags !== undefined) {
@@ -294,7 +346,7 @@ export class MemoryManager {
   }
 
   /**
-   * 搜索记忆碎片
+   * 搜索记忆碎片 - 支持向量搜索和关键词搜索
    */
   async searchMemories(keyword: string): Promise<MemoryFragment[]> {
     try {
@@ -304,58 +356,194 @@ export class MemoryManager {
 
       const memories = await this.getAllMemories();
       const lowerKeyword = keyword.toLowerCase().trim();
+      const vectorService = VectorEmbeddingService.getInstance();
 
-      // 智能语义映射：将自然语言问题映射到关键词
-      const semanticMappings = this.getSemanticMappings();
+      // 首先尝试向量搜索
+      let vectorSearchResults: VectorSearchResult[] = [];
 
-      // 查找相关的搜索词
-      let searchTerms: string[] = [lowerKeyword];
+      try {
+        // 生成查询向量
+        const queryVector = await vectorService.generateEmbedding(lowerKeyword);
 
-      // 检查是否有语义映射
-      for (const [pattern, terms] of Object.entries(semanticMappings)) {
-        if (lowerKeyword.includes(pattern)) {
-          searchTerms = [...searchTerms, ...terms];
+        if (queryVector) {
+          Logger.info('MemoryManager', `生成查询向量成功，开始向量搜索，维度: ${queryVector.length}`);
+
+          // 进行向量搜索
+          const filteredMemories = memories
+            .filter(memory => memory.vector && memory.vector.length > 0);
+
+          vectorSearchResults = filteredMemories
+            .map(memory => {
+              const result: VectorSearchResult = {
+                memory: memory,
+                similarity: vectorService.calculateCosineSimilarity(queryVector, memory.vector!)
+              };
+              return result;
+            })
+            .filter(result => result.similarity >= vectorService.getConfig().minSimilarity);
+
+          Logger.info('MemoryManager', `向量搜索找到 ${vectorSearchResults.length} 个候选结果`);
         }
+      } catch (error) {
+        Logger.warn('MemoryManager', `向量搜索失败，降级到关键词搜索: ${error}`);
+        // 向量搜索失败时使用关键词搜索
+        return this.fallbackToKeywordSearch(memories, lowerKeyword);
       }
 
-      // 将关键词按空格分割成多个词汇进行搜索
-      const keywords = searchTerms.flatMap(term => term.split(/\s+/)).filter(k => k.length > 0);
+      // 如果没有向量搜索结果，降级到关键词搜索
+      if (vectorSearchResults.length === 0) {
+        Logger.debug('MemoryManager', '向量搜索无结果，使用关键词搜索');
+        return this.fallbackToKeywordSearch(memories, lowerKeyword);
+      }
 
-      const matchedMemories = memories.filter(memory => {
-        const lowerContent = memory.content.toLowerCase();
-        const lowerTags = memory.tags.map(tag => tag.toLowerCase());
+      // 混合搜索：结合向量相似度和关键词匹配
+      const hybridResults: HybridSearchResult[] = vectorSearchResults.map(result => {
+        const keywordScore = this.calculateKeywordScore(result.memory, lowerKeyword);
+        const vectorScore = result.similarity;
 
-        // 检查是否有任何一个关键词匹配内容或标签
-        const hasMatch = keywords.some(kw => {
-          const contentMatch = lowerContent.includes(kw);
-          const tagMatch = lowerTags.some(tag => tag.includes(kw));
-          return contentMatch || tagMatch;
-        });
+        // 根据配置计算综合得分
+        const config = vectorService.getConfig();
+        const finalScore = config.hybridSearch
+          ? (vectorScore * config.vectorWeight) + (keywordScore * config.keywordWeight)
+          : vectorScore;
 
-        return hasMatch;
+        const hybridResult: HybridSearchResult = {
+          memory: result.memory,
+          finalScore: finalScore,
+          vectorScore: vectorScore,
+          keywordScore: keywordScore
+        };
+        return hybridResult;
       });
 
-      // 按匹配度和重要性排序
-      matchedMemories.sort((a, b) => {
-        const aScore = this.calculateMatchScore(a, keywords);
-        const bScore = this.calculateMatchScore(b, keywords);
-        if (aScore !== bScore) return bScore - aScore;
+      // 按综合得分排序
+      hybridResults.sort((a, b) => {
+        // 首先按综合得分
+        if (a.finalScore !== b.finalScore) return b.finalScore - a.finalScore;
 
-        // 匹配度相同时，按重要性排序
-        const aImportance = this.getImportanceWeight(a.importance);
-        const bImportance = this.getImportanceWeight(b.importance);
+        // 得分相同时，按重要性排序
+        const aImportance = this.getImportanceWeight(a.memory.importance);
+        const bImportance = this.getImportanceWeight(b.memory.importance);
         if (aImportance !== bImportance) return bImportance - aImportance;
 
         // 最后按使用频率排序
-        return b.usageCount - a.usageCount;
+        return b.memory.usageCount - a.memory.usageCount;
       });
 
-      Logger.debug('MemoryManager', `搜索关键词 "${keyword}" (扩展为: ${keywords.join(', ')}) 找到 ${matchedMemories.length} 个记忆碎片`);
-      return matchedMemories;
+      // 限制结果数量
+      const maxResults = vectorService.getConfig().maxResults;
+      const finalResults = hybridResults.slice(0, maxResults).map(result => result.memory);
+
+      Logger.info('MemoryManager',
+        `混合搜索完成，返回 ${finalResults.length} 个结果 ` +
+        `(向量相似度: ${hybridResults[0]?.vectorScore.toFixed(3) || 0}, ` +
+        `关键词得分: ${hybridResults[0]?.keywordScore.toFixed(3) || 0})`
+      );
+
+      return finalResults;
+
     } catch (error) {
       Logger.error('MemoryManager', `搜索记忆碎片失败: ${error}`);
       return [];
     }
+  }
+
+  /**
+   * 关键词搜索的降级方案
+   */
+  private fallbackToKeywordSearch(memories: MemoryFragment[], keyword: string): MemoryFragment[] {
+    Logger.debug('MemoryManager', `执行关键词搜索，关键词: "${keyword}"`);
+
+    // 智能语义映射：将自然语言问题映射到关键词
+    const semanticMappings = this.getSemanticMappings();
+
+    // 查找相关的搜索词
+    let searchTerms: string[] = [keyword];
+
+    // 检查是否有语义映射
+    const mappingEntries = Object.entries(semanticMappings);
+    for (let i = 0; i < mappingEntries.length; i++) {
+      const pattern = mappingEntries[i][0];
+      const terms = mappingEntries[i][1];
+      if (keyword.includes(pattern)) {
+        for (let j = 0; j < terms.length; j++) {
+          searchTerms.push(terms[j]);
+        }
+      }
+    }
+
+    // 将关键词按空格分割成多个词汇进行搜索
+    let keywords: string[] = [];
+    for (let i = 0; i < searchTerms.length; i++) {
+      const term = searchTerms[i];
+      const splitTerms = term.split(/\s+/);
+      for (let j = 0; j < splitTerms.length; j++) {
+        if (splitTerms[j].length > 0) {
+          keywords.push(splitTerms[j]);
+        }
+      }
+    }
+
+    const matchedMemories = memories.filter(memory => {
+      const lowerContent = memory.content.toLowerCase();
+      const lowerTags = memory.tags.map(tag => tag.toLowerCase());
+
+      // 检查是否有任何一个关键词匹配内容或标签
+      const hasMatch = keywords.some(kw => {
+        const contentMatch = lowerContent.includes(kw);
+        const tagMatch = lowerTags.some(tag => tag.includes(kw));
+        return contentMatch || tagMatch;
+      });
+
+      return hasMatch;
+    });
+
+    // 按匹配度和重要性排序
+    matchedMemories.sort((a, b) => {
+      const aScore = this.calculateMatchScore(a, keywords);
+      const bScore = this.calculateMatchScore(b, keywords);
+      if (aScore !== bScore) return bScore - aScore;
+
+      // 匹配度相同时，按重要性排序
+      const aImportance = this.getImportanceWeight(a.importance);
+      const bImportance = this.getImportanceWeight(b.importance);
+      if (aImportance !== bImportance) return bImportance - aImportance;
+
+      // 最后按使用频率排序
+      return b.usageCount - a.usageCount;
+    });
+
+    Logger.debug('MemoryManager', `关键词搜索 "${keyword}" (扩展为: ${keywords.join(', ')}) 找到 ${matchedMemories.length} 个记忆碎片`);
+    return matchedMemories;
+  }
+
+  /**
+   * 计算关键词匹配分数（用于混合搜索）
+   */
+  private calculateKeywordScore(memory: MemoryFragment, keyword: string): number {
+    const lowerContent = memory.content.toLowerCase();
+    const lowerTags = memory.tags.map(tag => tag.toLowerCase());
+    const lowerKeyword = keyword.toLowerCase();
+
+    // 计算内容匹配度
+    let contentScore = 0;
+    if (lowerContent.includes(lowerKeyword)) {
+      contentScore += 1;
+    }
+
+    // 计算标签匹配度
+    let tagScore = 0;
+    if (lowerTags.some(tag => tag.includes(lowerKeyword))) {
+      tagScore += 2; // 标签匹配权重更高
+    }
+
+    // 计算完全匹配度（针对短内容）
+    let exactMatchScore = 0;
+    if (memory.content.length < 100 && lowerContent.includes(lowerKeyword)) {
+      exactMatchScore += 0.5;
+    }
+
+    return Math.min(contentScore + tagScore + exactMatchScore, 3) / 3; // 归一化到0-1
   }
 
   /**
@@ -825,5 +1013,122 @@ ${memoryLines.join('\n')}
         Logger.error('MemoryManager', `记忆统计监听器执行失败: ${error}`);
       }
     });
+  }
+
+  /**
+   * 迁移现有记忆数据，为没有向量的记忆生成向量
+   */
+  async migrateMemoriesToVectors(): Promise<MemoryOperationResult> {
+    try {
+      Logger.info('MemoryManager', '开始迁移记忆数据到向量格式...');
+
+      const memories = await this.getAllMemories();
+      const vectorService = VectorEmbeddingService.getInstance();
+
+      // 检查是否需要迁移
+      const memoriesWithoutVectors = memories.filter(memory => !memory.vector || memory.vector.length === 0);
+
+      if (memoriesWithoutVectors.length === 0) {
+        Logger.info('MemoryManager', '所有记忆已有向量，无需迁移');
+        return {
+          success: true,
+          message: '所有记忆已有向量，无需迁移'
+        };
+      }
+
+      Logger.info('MemoryManager', `发现 ${memoriesWithoutVectors.length} 个记忆需要向量迁移`);
+
+      // 限制每次迁移的数量，避免API限制
+      const batchSize = 50;
+      let successCount = 0;
+      let failCount = 0;
+
+      for (let i = 0; i < memoriesWithoutVectors.length; i += batchSize) {
+        const batch = memoriesWithoutVectors.slice(i, i + batchSize);
+        Logger.info('MemoryManager', `正在处理第 ${Math.floor(i / batchSize) + 1} 批，共 ${batch.length} 个记忆`);
+
+        // 为这一批记忆生成向量
+        const texts: string[] = batch.map(memory => memory.content);
+        const embeddings: (number[] | null)[] = await vectorService.generateEmbeddings(texts);
+
+        // 更新记忆的向量
+        for (let j = 0; j < batch.length; j++) {
+          const memory = batch[j];
+          const vector = embeddings[j];
+
+          if (vector && vector.length > 0) {
+            // 找到原始记忆并更新
+            const originalIndex = memories.findIndex(m => m.id === memory.id);
+            if (originalIndex !== -1) {
+              memories[originalIndex].vector = vector;
+              memories[originalIndex].updatedAt = Date.now();
+              successCount++;
+            }
+          } else {
+            failCount++;
+            Logger.warn('MemoryManager', `记忆 "${memory.content.substring(0, 50)}..." 向量生成失败`);
+          }
+        }
+
+        // 每批完成后保存一次
+        const storage = AppStorage.getPreferences();
+        await storage.put(this.MEMORY_STORAGE_KEY, JSON.stringify(memories));
+        await storage.flush();
+
+        // 添加延迟避免API限制
+        if (i + batchSize < memoriesWithoutVectors.length) {
+          await new Promise<void>(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      Logger.info('MemoryManager',
+        `向量迁移完成: 成功 ${successCount} 个，失败 ${failCount} 个`
+      );
+
+      // 更新统计缓存
+      await this.updateMemoryStatsCache();
+
+      return {
+        success: true,
+        message: `向量迁移完成: 成功 ${successCount} 个，失败 ${failCount} 个`,
+        data: memories
+      };
+
+    } catch (error) {
+      Logger.error('MemoryManager', `向量迁移失败: ${error}`);
+      return {
+        success: false,
+        message: `向量迁移失败: ${error}`
+      };
+    }
+  }
+
+  
+  /**
+   * 获取向量迁移状态
+   */
+  async getVectorMigrationStatus(): Promise<VectorMigrationStatus> {
+    try {
+      const memories = await this.getAllMemories();
+      const memoriesWithVectors = memories.filter(memory => memory.vector && memory.vector.length > 0).length;
+      const memoriesWithoutVectors = memories.length - memoriesWithVectors;
+
+      const status: VectorMigrationStatus = {
+        totalMemories: memories.length,
+        memoriesWithVectors: memoriesWithVectors,
+        memoriesWithoutVectors: memoriesWithoutVectors,
+        migrationNeeded: memoriesWithoutVectors > 0
+      };
+      return status;
+    } catch (error) {
+      Logger.error('MemoryManager', `获取向量迁移状态失败: ${error}`);
+      const errorStatus: VectorMigrationStatus = {
+        totalMemories: 0,
+        memoriesWithVectors: 0,
+        memoriesWithoutVectors: 0,
+        migrationNeeded: false
+      };
+      return errorStatus;
+    }
   }
 }

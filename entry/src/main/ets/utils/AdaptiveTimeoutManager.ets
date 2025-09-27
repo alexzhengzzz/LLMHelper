@@ -14,6 +14,7 @@ export enum RequestType {
   CONNECTION_TEST = 'connection_test',
   CODE_EXECUTION = 'code_execution',
   SEARCH = 'search',
+  EMBEDDING = 'embedding',
   FILE_OPERATION = 'file_operation',
   WEBSOCKET = 'websocket',
   OTHER = 'other'

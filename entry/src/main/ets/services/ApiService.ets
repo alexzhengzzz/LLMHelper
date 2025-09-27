@@ -5,6 +5,7 @@ import { AppConfigManager } from '../utils/AppConfigManager';
 import { IApiService } from '../di/ServiceInterfaces';
 import { NetworkRequestOptimizer, OptimizedRequestConfig } from '../utils/NetworkRequestOptimizer';
 import { RequestType } from '../utils/AdaptiveTimeoutManager';
+import { VectorEmbeddingResponse } from '../types/APITypes';
 
 /**
  * API服务类 - 处理与服务器的HTTP通信
@@ -222,6 +223,57 @@ export class ApiService implements IApiService {
       const errorMessage = (error as Error).message || '未知网络错误';
       Logger.error('ApiService', `代码执行失败: ${errorMessage}`);
       throw new Error(`代码执行失败: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * 生成文本向量嵌入 - 使用优化的网络请求系统
+   *
+   * 向服务器发送文本内容，获取对应的向量嵌入表示。
+   * 支持语义搜索和相似度计算功能。使用网络优化系统提供
+   * 高性能的向量计算服务。
+   *
+   * @param {string} text 需要生成向量的文本内容
+   * @returns {Promise<number[]>} 文本的向量嵌入表示（384维）
+   * @throws {Error} 当网络请求失败或服务器返回错误状态码时抛出异常
+   *
+   * @example
+   * const vector = await apiService.generateEmbedding('我喜欢喝咖啡');
+   * console.log('向量维度:', vector.length);
+   */
+  async generateEmbedding(text: string): Promise<number[]> {
+    try {
+      const url = `${this.getBaseUrl()}/embed`;
+      const requestBody = JSON.stringify({ text });
+
+      const optimizedConfig: OptimizedRequestConfig = {
+        url: url,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: requestBody,
+        requestType: RequestType.EMBEDDING,
+        enableDeduplication: true, // 相同文本的嵌入请求可以缓存
+        enableAdaptiveTimeout: true,
+        retryAttempts: 2,
+        retryDelay: 2000
+      };
+
+      Logger.debug('ApiService', `生成向量嵌入: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
+      const response = await this.networkOptimizer.sendOptimizedRequest(optimizedConfig);
+
+      if (response.statusCode === 200) {
+        const result = JSON.parse(response.body) as VectorEmbeddingResponse;
+        Logger.debug('ApiService', `向量嵌入生成成功，维度: ${result.vector.length}`);
+        return result.vector;
+      } else {
+        throw new Error(`向量嵌入生成失败,状态码: ${response.statusCode}, 信息: ${response.body}`);
+      }
+    } catch (error) {
+      const errorMessage = (error as Error).message || '未知网络错误';
+      Logger.error('ApiService', `生成向量嵌入失败: ${errorMessage}`);
+      throw new Error(`生成向量嵌入失败: ${errorMessage}`);
     }
   }
 

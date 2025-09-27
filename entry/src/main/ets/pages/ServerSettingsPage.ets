@@ -6,6 +6,7 @@
 import { router } from '@kit.ArkUI';
 import { ServerConfigManager, ServerEndpoint } from '../utils/ServerConfigManager';
 import { Logger } from '../utils/Logger';
+import { VectorEmbeddingService } from '../services/VectorEmbeddingService';
 
 @Entry
 @ComponentV2
@@ -82,13 +83,28 @@ struct ServerSettingsPage {
       
       // 更新服务器配置
       await this.serverConfigManager.setCurrentServer(newEndpoint);
-      
+
       // 更新显示信息
       this.currentServerInfo = `${newEndpoint.protocol}://${newEndpoint.ip}:${newEndpoint.port}`;
       this.successMessage = '服务器配置保存成功！';
-      
+
       Logger.info('ServerSettingsPage', `服务器配置已更新: ${this.currentServerInfo}`);
-      
+
+      // 重新初始化向量化服务
+      setTimeout(async () => {
+        try {
+          const vectorService = VectorEmbeddingService.getInstance();
+          const initialized = await vectorService.initialize();
+          if (initialized) {
+            Logger.info('ServerSettingsPage', '向量化服务重新初始化成功');
+          } else {
+            Logger.warn('ServerSettingsPage', '向量化服务重新初始化失败');
+          }
+        } catch (error) {
+          Logger.error('ServerSettingsPage', `向量化服务重新初始化异常: ${error}`);
+        }
+      }, 200);
+
       // 测试连接
       setTimeout(() => {
         this.testConnection();

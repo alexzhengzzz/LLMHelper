@@ -352,7 +352,7 @@ export struct VoiceInputComponent {
             .height(3)
             .borderRadius(1.5)
             .fill(this.getKeyboardIconColor())
-            .key(`key-${index}`)
+            .id(`key-${index}`)
         })
       }
 

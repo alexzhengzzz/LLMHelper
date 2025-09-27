@@ -78,7 +78,15 @@ export class CalendarManagerTool {
     const operationSchema: JSONSchema = {
       type: 'string',
       description: '操作类型：create_event(创建事件), update_event(更新事件), delete_event(删除事件), query_events(查询事件), create_calendar(创建日历), delete_calendar(删除日历), get_calendars(获取日历列表)',
-      enum: Object.values(CalendarOperation)
+      enum: [
+        CalendarOperation.CREATE_EVENT,
+        CalendarOperation.UPDATE_EVENT,
+        CalendarOperation.DELETE_EVENT,
+        CalendarOperation.QUERY_EVENTS,
+        CalendarOperation.CREATE_CALENDAR,
+        CalendarOperation.DELETE_CALENDAR,
+        CalendarOperation.GET_CALENDARS
+      ]
     };
 
     const titleSchema: JSONSchema = {

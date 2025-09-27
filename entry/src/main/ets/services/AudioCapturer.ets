@@ -122,7 +122,7 @@ export default class AudioCapturer {
         
         // 获取当前可用的音频数据
         let bufferSize = await this.mAudioCapturer.getBufferSize();
-        let buffer: ArrayBuffer = await this.mAudioCapturer.read(bufferSize, false); // 改为非阻塞读取
+        let buffer: ArrayBuffer = await this.mAudioCapturer.read(bufferSize, true); // 使用同步读取
         
         if (null === this.mDataCallBack) {
           Logger.error(TAG, 'AudioCapturerUtil callback is null');

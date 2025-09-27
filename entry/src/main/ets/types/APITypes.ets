@@ -371,3 +371,8 @@ export interface ModelCacheConfig {
   enabled: boolean; // 是否启用缓存
   forceRefresh?: boolean; // 是否强制刷新
 }
+
+// 向量嵌入响应接口
+export interface VectorEmbeddingResponse {
+  vector: number[];
+}

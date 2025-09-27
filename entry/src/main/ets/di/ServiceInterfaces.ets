@@ -111,22 +111,27 @@ export interface IApiService {
    * 获取厂商列表
    */
   getProviders(): Promise<ProvidersResponse>;
-  
+
   /**
    * 发送聊天消息
    */
   sendChatMessage(request: LegacyChatRequest): Promise<LegacyChatResponse>;
-  
+
   /**
    * 执行代码
    */
   executeCode(request: ExecuteRequest): Promise<ExecuteResponse>;
-  
+
+  /**
+   * 生成文本向量嵌入
+   */
+  generateEmbedding(text: string): Promise<number[]>;
+
   /**
    * 测试连接
    */
   testConnection(): Promise<boolean>;
-  
+
   /**
    * 销毁服务
    */

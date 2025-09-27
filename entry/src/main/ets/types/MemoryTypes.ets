@@ -15,6 +15,7 @@ export interface MemoryFragment {
   updatedAt: number; // 更新时间戳
   usageCount: number; // 使用次数统计
   lastUsedAt: number; // 最后使用时间
+  vector?: number[]; // 向量表示，用于语义搜索
 }
 
 // 记忆项接口（带标题）
@@ -324,4 +325,45 @@ export interface MemorySyncResult {
   addedCount: number;
   updatedCount: number;
   deletedCount: number;
+}
+
+// 向量搜索配置接口
+export interface VectorSearchConfig {
+  enabled: boolean;
+  hybridSearch: boolean;
+  vectorWeight: number;
+  keywordWeight: number;
+  minSimilarity: number;
+  maxResults: number;
+}
+
+// 向量服务状态接口
+export interface VectorServiceStatus {
+  modelLoaded: boolean;
+  modelName: string;
+  embeddingDimension: number;
+  totalEmbeddings: number;
+  averageGenerationTime: number;
+}
+
+// 混合搜索结果接口
+export interface HybridSearchResult {
+  memory: MemoryFragment;
+  finalScore: number;
+  vectorScore: number;
+  keywordScore: number;
+}
+
+// 向量搜索结果接口
+export interface VectorSearchResult {
+  memory: MemoryFragment;
+  similarity: number;
+}
+
+// 向量迁移状态接口
+export interface VectorMigrationStatus {
+  totalMemories: number;
+  memoriesWithVectors: number;
+  memoriesWithoutVectors: number;
+  migrationNeeded: boolean;
 }
