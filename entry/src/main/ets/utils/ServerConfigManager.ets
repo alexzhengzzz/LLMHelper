@@ -76,19 +76,28 @@ export class ServerConfigManager {
    * 获取默认配置
    */
   private getDefaultConfig(): ServerConfiguration {
-    // 默认配置 - 使用localhost开发环境
-    const defaultEndpoint: ServerEndpoint = {
+    // 默认配置 - 使用生产服务器（根据CLAUDE.md中的配置）
+    const productionEndpoint: ServerEndpoint = {
+      ip: '45.127.32.38',
+      port: 8080,
+      protocol: 'http',
+      wsProtocol: 'ws',
+      description: '生产服务器'
+    };
+
+    const localhostEndpoint: ServerEndpoint = {
       ip: 'localhost',
       port: 8080,
       protocol: 'http',
       wsProtocol: 'ws',
       description: '本地开发服务器'
     };
-    
+
     return {
-      current: defaultEndpoint,
+      current: productionEndpoint, // 默认使用生产服务器
       presets: [
-        defaultEndpoint,
+        productionEndpoint,
+        localhostEndpoint,
         {
           ip: '127.0.0.1',
           port: 8080,
@@ -116,22 +125,105 @@ export class ServerConfigManager {
   async initialize(): Promise<void> {
     try {
       Logger.info('ServerConfigManager', '初始化服务器配置管理器');
-      
+
       const storage = await this.getStorage();
       const savedConfig: string = await storage.get(this.storageKey, '') as string;
-      
+
       if (savedConfig) {
-        const parsedConfig: ServerConfiguration = JSON.parse(savedConfig) as ServerConfiguration;
-        this.config = this.mergeConfigurations(this.getDefaultConfig(), parsedConfig);
-        Logger.info('ServerConfigManager', `已加载保存的服务器配置: ${this.getBaseUrl()}`);
+        try {
+          const parsedConfig: ServerConfiguration = JSON.parse(savedConfig) as ServerConfiguration;
+          // 验证配置有效性
+          if (this.isValidConfiguration(parsedConfig)) {
+            this.config = this.mergeConfigurations(this.getDefaultConfig(), parsedConfig);
+            Logger.info('ServerConfigManager', `已加载保存的服务器配置: ${this.getBaseUrl()}`);
+          } else {
+            Logger.warn('ServerConfigManager', '保存的配置无效，使用默认配置');
+            this.config = this.getDefaultConfig();
+            await this.saveConfig();
+          }
+        } catch (parseError) {
+          Logger.error('ServerConfigManager', `解析保存的配置失败: ${parseError}`);
+          this.config = this.getDefaultConfig();
+          await this.saveConfig();
+        }
       } else {
         Logger.info('ServerConfigManager', '使用默认服务器配置');
+        this.config = this.getDefaultConfig();
         await this.saveConfig();
       }
     } catch (error) {
       Logger.error('ServerConfigManager', `初始化失败: ${error}`);
       this.config = this.getDefaultConfig();
+      // 尝试保存默认配置
+      try {
+        await this.saveConfig();
+      } catch (saveError) {
+        Logger.error('ServerConfigManager', `保存默认配置失败: ${saveError}`);
+      }
     }
+  }
+
+  /**
+   * 验证配置有效性
+   */
+  private isValidConfiguration(config: ServerConfiguration): boolean {
+    try {
+      // 验证基本结构
+      if (!config || typeof config !== 'object') {
+        return false;
+      }
+
+      // 验证当前服务器配置
+      if (!config.current || !this.isValidEndpoint(config.current)) {
+        return false;
+      }
+
+      // 验证预设端点数组
+      if (!Array.isArray(config.presets)) {
+        return false;
+      }
+
+      // 验证自定义端点数组
+      if (!Array.isArray(config.customEndpoints)) {
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      Logger.error('ServerConfigManager', `配置验证失败: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * 验证端点配置有效性
+   */
+  private isValidEndpoint(endpoint: ServerEndpoint): boolean {
+    if (!endpoint || typeof endpoint !== 'object') {
+      return false;
+    }
+
+    // 验证IP地址
+    if (!endpoint.ip || typeof endpoint.ip !== 'string' || !this.validateIpFormat(endpoint.ip)) {
+      return false;
+    }
+
+    // 验证端口
+    if (!endpoint.port || typeof endpoint.port !== 'number' || !this.validatePort(endpoint.port)) {
+      return false;
+    }
+
+    // 验证协议
+    if (!endpoint.protocol || (endpoint.protocol !== 'http' && endpoint.protocol !== 'https')) {
+      return false;
+    }
+
+    // 验证WebSocket协议
+    if (!endpoint.wsProtocol || (endpoint.wsProtocol !== 'ws' && endpoint.wsProtocol !== 'wss')) {
+      return false;
+    }
+
+    return true;
   }
 
   /**
@@ -139,12 +231,34 @@ export class ServerConfigManager {
    */
   private async saveConfig(): Promise<void> {
     try {
+      // 验证配置有效性
+      if (!this.isValidConfiguration(this.config)) {
+        Logger.error('ServerConfigManager', '配置验证失败，无法保存');
+        return;
+      }
+
       const storage = await this.getStorage();
-      await storage.put(this.storageKey, JSON.stringify(this.config));
+      const configJson = JSON.stringify(this.config);
+
+      // 验证JSON序列化是否成功
+      if (!configJson || configJson === '{}') {
+        Logger.error('ServerConfigManager', '配置序列化失败');
+        return;
+      }
+
+      await storage.put(this.storageKey, configJson);
       await storage.flush();
-      Logger.info('ServerConfigManager', '服务器配置已保存');
+
+      Logger.info('ServerConfigManager', `服务器配置已保存: ${this.getBaseUrl()}`);
+
+      // 验证保存是否成功
+      const savedConfig = await storage.get(this.storageKey, '') as string;
+      if (savedConfig !== configJson) {
+        Logger.error('ServerConfigManager', '配置保存验证失败');
+      }
     } catch (error) {
       Logger.error('ServerConfigManager', `保存配置失败: ${error}`);
+      throw new Error(`保存配置失败: ${error}`);
     }
   }
 
@@ -491,11 +605,49 @@ export class ServerConfigManager {
    */
   async resetToDefault(): Promise<void> {
     Logger.info('ServerConfigManager', '重置服务器配置为默认值');
-    this.config = this.getDefaultConfig();
-    await this.saveConfig();
-    
-    // 通知所有监听器配置已变更
-    this.notifyConfigChange(this.config.current);
+
+    try {
+      const defaultConfig = this.getDefaultConfig();
+      this.config = defaultConfig;
+      await this.saveConfig();
+
+      Logger.info('ServerConfigManager', '服务器配置已重置为默认值');
+
+      // 通知所有监听器配置已变更
+      this.notifyConfigChange(this.config.current);
+    } catch (error) {
+      Logger.error('ServerConfigManager', `重置配置失败: ${error}`);
+      throw new Error(`重置配置失败: ${error}`);
+    }
+  }
+
+  /**
+   * 强制恢复配置（清除保存的配置，重新使用默认值）
+   */
+  async forceRecoverConfiguration(): Promise<void> {
+    Logger.warn('ServerConfigManager', '强制恢复配置');
+
+    try {
+      const storage = await this.getStorage();
+
+      // 清除保存的配置
+      await storage.delete(this.storageKey);
+      await storage.flush();
+
+      // 重新初始化
+      await this.initialize();
+
+      Logger.info('ServerConfigManager', '配置强制恢复完成');
+
+      // 通知所有监听器配置已变更
+      this.notifyConfigChange(this.config.current);
+    } catch (error) {
+      Logger.error('ServerConfigManager', `强制恢复配置失败: ${error}`);
+      // 如果连强制恢复都失败，至少确保内存中有默认配置
+      this.config = this.getDefaultConfig();
+      this.notifyConfigChange(this.config.current);
+      throw new Error(`强制恢复配置失败: ${error}`);
+    }
   }
 
   /**

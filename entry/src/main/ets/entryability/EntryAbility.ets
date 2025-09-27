@@ -8,9 +8,11 @@ import { ThemeManager } from '../utils/ThemeManager';
 import { AppConfigManager } from '../utils/AppConfigManager';
 import { LocalToolManager } from '../services/LocalToolManager';
 import { RoleManager } from '../utils/RoleManager';
+import { ServerConfigManager } from '../utils/ServerConfigManager';
 export default class EntryAbility extends UIAbility {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private appConfigManager: AppConfigManager = AppConfigManager.getInstance();
+  private serverConfigManager: ServerConfigManager = ServerConfigManager.getInstance();
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onCreate');
@@ -22,6 +24,13 @@ export default class EntryAbility extends UIAbility {
     } catch (e) {
       hilog.error(0x0000, 'testTag', `Failed to initialize LocalToolManager: ${e.message}`);
     }
+
+    // 初始化服务器配置管理器（优先级最高）
+    this.serverConfigManager.initialize().then(() => {
+      hilog.info(0x0000, 'testTag', 'ServerConfigManager initialized successfully');
+    }).catch((error: Error) => {
+      hilog.error(0x0000, 'testTag', `Failed to initialize ServerConfigManager: ${error.message}`);
+    });
 
     // 初始化角色管理器
     RoleManager.getInstance().initializeDefaultRoles().then(() => {
