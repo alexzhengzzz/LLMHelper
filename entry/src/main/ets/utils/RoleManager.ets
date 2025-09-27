@@ -192,12 +192,42 @@ export class RoleManager {
   }
 
   /**
+   * 检查角色名称是否已存在（不区分大小写）
+   */
+  async isRoleNameExists(name: string, excludeRoleId?: string): Promise<boolean> {
+    try {
+      Logger.debug('RoleManager', `检查角色名称是否存在: ${name}`);
+
+      const allRoles = await this.getAllRoles();
+      const trimmedName = name.trim();
+
+      // 检查是否有重复名称（排除指定的角色ID，用于更新场景）
+      const existingRole = allRoles.find(role =>
+        role.name.toLowerCase() === trimmedName.toLowerCase() &&
+        role.id !== excludeRoleId
+      );
+
+      const exists = !!existingRole;
+      Logger.debug('RoleManager', `角色名称 "${trimmedName}" ${exists ? '已存在' : '不存在'}`);
+      return exists;
+    } catch (error) {
+      Logger.error('RoleManager', `检查角色名称存在性失败: ${error}`);
+      return false;
+    }
+  }
+
+  /**
    * 创建新角色
    */
   async createRole(name: string, content: string, category: RoleCategory = RoleCategory.CUSTOM,
                    roleIcon: string = '', roleDescription: string = ''): Promise<SystemPrompt> {
     try {
       Logger.info('RoleManager', `创建新角色: ${name}`);
+
+      // 检查角色名称是否已存在
+      if (await this.isRoleNameExists(name)) {
+        throw new Error(`角色名称 "${name.trim()}" 已存在，请使用其他名称`);
+      }
 
       // 注意：此方法没有角色数量限制，用户可以创建任意数量的角色
 
@@ -228,6 +258,11 @@ export class RoleManager {
     try {
       Logger.info('RoleManager', `更新角色: ${role.name}`);
 
+      // 检查角色名称是否已存在（排除当前角色ID）
+      if (await this.isRoleNameExists(role.name, role.id)) {
+        throw new Error(`角色名称 "${role.name.trim()}" 已存在，请使用其他名称`);
+      }
+
       // 确保是角色类型
       role.isRole = true;
       role.timestamp = Date.now(); // 更新时间戳
@@ -255,7 +290,12 @@ export class RoleManager {
         throw new Error('不能删除内置角色');
       }
 
+      // 删除角色
       await AppStorage.deleteSystemPrompt(roleId);
+
+      // 同时从已应用角色列表中移除
+      await this.removeRoleFromSidebar(roleId);
+
       Logger.info('RoleManager', `角色删除成功: ${roleId}`);
     } catch (error) {
       Logger.error('RoleManager', `删除角色失败: ${error}`);
@@ -822,5 +862,143 @@ export class RoleManager {
       RoleCategory.PSYCHOLOGY,
       RoleCategory.CUSTOM
     ];
+  }
+
+  //=================== 已应用角色管理相关方法 ===================
+
+  /**
+   * 获取已应用到侧边栏的角色列表
+   */
+  async getAppliedRoles(): Promise<SystemPrompt[]> {
+    try {
+      Logger.info('RoleManager', '获取已应用到侧边栏的角色列表');
+
+      // 获取已应用角色的ID列表
+      const appliedRoleIds = await AppStorage.getAppliedRoleIds();
+      if (appliedRoleIds.length === 0) {
+        Logger.debug('RoleManager', '没有已应用的角色');
+        return [];
+      }
+
+      // 获取所有角色
+      const allRoles = await this.getAllRoles();
+
+      // 筛选出已应用的角色，保持ID列表的顺序
+      const appliedRoles: SystemPrompt[] = [];
+      const invalidRoleIds: string[] = []; // 记录无效的角色ID
+
+      for (const roleId of appliedRoleIds) {
+        const role = allRoles.find(r => r.id === roleId);
+        if (role) {
+          appliedRoles.push(role);
+        } else {
+          Logger.warn('RoleManager', `已应用角色ID ${roleId} 对应的角色不存在，可能已被删除`);
+          invalidRoleIds.push(roleId);
+        }
+      }
+
+      // 清理无效的角色ID（从已应用列表中移除）
+      if (invalidRoleIds.length > 0) {
+        Logger.info('RoleManager', `清理 ${invalidRoleIds.length} 个无效的角色ID`);
+        for (const invalidRoleId of invalidRoleIds) {
+          try {
+            await this.removeRoleFromSidebar(invalidRoleId);
+          } catch (error) {
+            Logger.error('RoleManager', `清理无效角色ID失败 ${invalidRoleId}: ${error}`);
+          }
+        }
+      }
+
+      Logger.info('RoleManager', `获取到 ${appliedRoles.length} 个已应用角色`);
+      return appliedRoles;
+    } catch (error) {
+      Logger.error('RoleManager', `获取已应用角色列表失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 将角色应用到侧边栏
+   */
+  async applyRoleToSidebar(roleId: string): Promise<void> {
+    try {
+      Logger.info('RoleManager', `将角色应用到侧边栏: ${roleId}`);
+
+      // 检查角色是否存在
+      const role = await this.getRoleById(roleId);
+      if (!role) {
+        throw new Error(`角色不存在: ${roleId}`);
+      }
+
+      // 添加到已应用列表
+      await AppStorage.addAppliedRole(roleId);
+      Logger.info('RoleManager', `角色 ${role.name} 已应用到侧边栏`);
+    } catch (error) {
+      Logger.error('RoleManager', `应用角色到侧边栏失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 从侧边栏移除已应用的角色
+   */
+  async removeRoleFromSidebar(roleId: string): Promise<void> {
+    try {
+      Logger.info('RoleManager', `从侧边栏移除角色: ${roleId}`);
+
+      // 从已应用列表中移除
+      await AppStorage.removeAppliedRole(roleId);
+
+      // 获取角色名称用于日志
+      const role = await this.getRoleById(roleId);
+      const roleName = role ? role.name : roleId;
+
+      Logger.info('RoleManager', `角色 ${roleName} 已从侧边栏移除`);
+    } catch (error) {
+      Logger.error('RoleManager', `从侧边栏移除角色失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 检查角色是否已应用到侧边栏
+   */
+  async isRoleAppliedToSidebar(roleId: string): Promise<boolean> {
+    try {
+      Logger.debug('RoleManager', `检查角色是否已应用到侧边栏: ${roleId}`);
+      const isApplied = await AppStorage.isRoleApplied(roleId);
+      Logger.debug('RoleManager', `角色 ${roleId} 侧边栏应用状态: ${isApplied}`);
+      return isApplied;
+    } catch (error) {
+      Logger.error('RoleManager', `检查角色侧边栏应用状态失败: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * 清空侧边栏所有已应用角色
+   */
+  async clearAllAppliedRoles(): Promise<void> {
+    try {
+      Logger.info('RoleManager', '清空侧边栏所有已应用角色');
+      await AppStorage.clearAppliedRoles();
+      Logger.info('RoleManager', '侧边栏已应用角色已全部清空');
+    } catch (error) {
+      Logger.error('RoleManager', `清空侧边栏已应用角色失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 获取已应用角色的数量
+   */
+  async getAppliedRolesCount(): Promise<number> {
+    try {
+      const appliedRoleIds = await AppStorage.getAppliedRoleIds();
+      return appliedRoleIds.length;
+    } catch (error) {
+      Logger.error('RoleManager', `获取已应用角色数量失败: ${error}`);
+      return 0;
+    }
   }
 }

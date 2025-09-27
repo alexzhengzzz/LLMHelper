@@ -53,6 +53,7 @@ struct RoleManagerPage {
   @Local editRoleCategory: RoleCategory = RoleCategory.CUSTOM;
   @Local editRoleIcon: string = '';
   @Local editRoleDescription: string = '';
+  @Local roleNameError: string = ''; // 角色名称错误提示
   @Local isDarkMode: boolean = false;
   @Local statusBarHeight: number = 44;
   @Local usingRoleId: string = '';
@@ -63,6 +64,8 @@ struct RoleManagerPage {
   @Local isLoading: boolean = true;
   @Local showSortOptions: boolean = false;
   @Local currentSortOption: RoleSortOption = { field: 'usageCount', order: 'desc' };
+  @Local appliedRoleIds: string[] = []; // 已应用到侧边栏的角色ID列表
+  @Local applyingRoleId: string = ''; // 正在应用的角色ID（用于显示loading状态）
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private chatViewModel: ChatViewModel = new ChatViewModel();
   private sessionManager: SessionManager = SessionManager.getInstance();
@@ -268,6 +271,7 @@ struct RoleManagerPage {
         this.showAddDialog = true;
         this.newRoleName = '';
         this.newRoleContent = '';
+        this.clearRoleNameError();
       })
     }
     .width('100%')
@@ -525,9 +529,9 @@ struct RoleManagerPage {
           .width('100%')
           .margin({ bottom: 12 })
 
-        // 操作按钮：使用、编辑、删除一行布局 - 三个按钮相等大小
+        // 操作按钮：使用、应用到侧边栏、编辑、删除一行布局 - 四个按钮相等大小
         Row({ space: 8 }) {
-          // 使用按钮 - 占1/3宽度
+          // 使用按钮 - 占1/4宽度
           Button() {
             Row() {
               if (this.usingRoleId === role.id) {
@@ -545,7 +549,7 @@ struct RoleManagerPage {
                 Text(this.isFromChatPage ? '🎯' : '🚀')
                   .fontSize(14)
                   .margin({ right: 3 })
-                Text(this.isFromChatPage ? '应用' : '使用')
+                Text(this.isFromChatPage ? '应用' : '对话')
                   .fontSize(12)
                   .fontColor(Color.White)
                   .fontWeight(FontWeight.Medium)
@@ -571,7 +575,64 @@ struct RoleManagerPage {
             }
           })
 
-          // 编辑按钮 - 占1/3宽度（内置角色不可编辑）
+          // 应用到侧边栏按钮 - 占1/4宽度
+          Button() {
+            Row() {
+              if (this.applyingRoleId === role.id) {
+                // Loading状态
+                LoadingProgress()
+                  .width(14)
+                  .height(14)
+                  .color(Color.White)
+                  .margin({ right: 4 })
+                Text('处理中...')
+                  .fontSize(12)
+                  .fontColor(Color.White)
+                  .fontWeight(FontWeight.Medium)
+              } else {
+                // 根据是否已应用显示不同的图标和文字
+                if (this.isRoleAppliedToSidebar(role.id)) {
+                  Text('✓')
+                    .fontSize(14)
+                    .margin({ right: 3 })
+                  Text('已添加')
+                    .fontSize(12)
+                    .fontColor(Color.White)
+                    .fontWeight(FontWeight.Medium)
+                } else {
+                  Text('📌')
+                    .fontSize(14)
+                    .margin({ right: 3 })
+                  Text('添加')
+                    .fontSize(12)
+                    .fontColor(Color.White)
+                    .fontWeight(FontWeight.Medium)
+                }
+              }
+            }
+            .alignItems(VerticalAlign.Center)
+          }
+          .height(40)
+          .layoutWeight(1)
+          .backgroundColor(this.applyingRoleId === role.id ? '#999999' :
+            this.isRoleAppliedToSidebar(role.id) ? '#4CAF50' : $r('app.color.primary_color'))
+          .borderRadius(8)
+          .shadow({
+            radius: 4,
+            color: this.applyingRoleId === role.id ? '#40999999' :
+              this.isRoleAppliedToSidebar(role.id) ? '#404CAF50' : $r('app.color.primary_color_20'),
+            offsetY: 1
+          })
+          .enabled(this.applyingRoleId === '')
+          .onClick(() => {
+            if (this.isRoleAppliedToSidebar(role.id)) {
+              this.removeRoleFromSidebar(role);
+            } else {
+              this.applyRoleToSidebar(role);
+            }
+          })
+
+          // 编辑按钮 - 占1/4宽度（内置角色不可编辑）
           Button() {
             Row() {
               Text(role.isBuiltIn ? '👁️' : '✏️')
@@ -599,11 +660,12 @@ struct RoleManagerPage {
               this.editingRole = role;
               this.editRoleName = role.name;
               this.editRoleContent = role.content;
+              this.clearRoleNameError();
               this.showEditDialog = true;
             }
           })
 
-          // 删除按钮 - 占1/3宽度（内置角色不显示删除按钮）
+          // 删除按钮 - 占1/4宽度（内置角色不显示删除按钮）
           if (!role.isBuiltIn) {
             Button() {
               Row() {
@@ -727,6 +789,7 @@ struct RoleManagerPage {
         this.showAddDialog = true;
         this.newRoleName = '';
         this.newRoleContent = '';
+        this.clearRoleNameError();
       })
     }
     .width('100%')
@@ -776,14 +839,14 @@ struct RoleManagerPage {
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            
+
             Text('*')
               .fontSize(15)
               .fontColor($r('app.color.error_color'))
               .margin({ left: 2 })
           }
           .alignItems(VerticalAlign.Center)
-          
+
           TextInput({ placeholder: '例如：编程助手、创意写作...' })
             .width('100%')
             .height(48)
@@ -792,11 +855,23 @@ struct RoleManagerPage {
             .padding({ left: 16, right: 16 })
             .border({
               width: 1,
-              color: this.newRoleName.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
+              color: this.roleNameError ? $r('app.color.error_color') :
+                (this.newRoleName.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color'))
             })
             .onChange((value: string) => {
               this.newRoleName = value;
+              this.validateRoleName(value);
             })
+
+          // 显示错误提示
+          if (this.roleNameError) {
+            Text(this.roleNameError)
+              .fontSize(12)
+              .fontColor($r('app.color.error_color'))
+              .textAlign(TextAlign.Start)
+              .width('100%')
+              .margin({ top: 4 })
+          }
         }
         .alignItems(HorizontalAlign.Start)
 
@@ -850,12 +925,12 @@ struct RoleManagerPage {
         Button('创建角色')
           .fontSize(16)
           .fontColor(Color.White)
-          .backgroundColor(this.newRoleName.trim().length > 0 && this.newRoleContent.trim().length > 0 ? 
+          .backgroundColor(this.newRoleName.trim().length > 0 && this.newRoleContent.trim().length > 0 && !this.roleNameError ?
             $r('app.color.primary_color') : $r('app.color.border_color'))
           .borderRadius(12)
           .height(44)
           .layoutWeight(1)
-          .enabled(this.newRoleName.trim().length > 0 && this.newRoleContent.trim().length > 0)
+          .enabled(this.newRoleName.trim().length > 0 && this.newRoleContent.trim().length > 0 && !this.roleNameError)
           .onClick(() => {
             this.addRole();
           })
@@ -919,14 +994,14 @@ struct RoleManagerPage {
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            
+
             Text('*')
               .fontSize(15)
               .fontColor($r('app.color.error_color'))
               .margin({ left: 2 })
           }
           .alignItems(VerticalAlign.Center)
-          
+
           TextInput({ placeholder: '请输入角色名称', text: this.editRoleName })
             .width('100%')
             .height(48)
@@ -935,11 +1010,23 @@ struct RoleManagerPage {
             .padding({ left: 16, right: 16 })
             .border({
               width: 1,
-              color: this.editRoleName.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
+              color: this.roleNameError ? $r('app.color.error_color') :
+                (this.editRoleName.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color'))
             })
             .onChange((value: string) => {
               this.editRoleName = value;
+              this.validateEditRoleName(value);
             })
+
+          // 显示错误提示
+          if (this.roleNameError) {
+            Text(this.roleNameError)
+              .fontSize(12)
+              .fontColor($r('app.color.error_color'))
+              .textAlign(TextAlign.Start)
+              .width('100%')
+              .margin({ top: 4 })
+          }
         }
         .alignItems(HorizontalAlign.Start)
 
@@ -993,12 +1080,12 @@ struct RoleManagerPage {
         Button('保存更改')
           .fontSize(16)
           .fontColor(Color.White)
-          .backgroundColor(this.editRoleName.trim().length > 0 && this.editRoleContent.trim().length > 0 ? 
+          .backgroundColor(this.editRoleName.trim().length > 0 && this.editRoleContent.trim().length > 0 && !this.roleNameError ?
             $r('app.color.primary_color') : $r('app.color.border_color'))
           .borderRadius(12)
           .height(44)
           .layoutWeight(1)
-          .enabled(this.editRoleName.trim().length > 0 && this.editRoleContent.trim().length > 0)
+          .enabled(this.editRoleName.trim().length > 0 && this.editRoleContent.trim().length > 0 && !this.roleNameError)
           .onClick(() => {
             this.updateRole();
           })
@@ -1136,6 +1223,10 @@ struct RoleManagerPage {
       // 强制触发UI更新 - 使用扩展运算符创建新数组
       this.roles = [...loadedRoles];
 
+      // 加载已应用到侧边栏的角色ID列表
+      this.appliedRoleIds = await AppStorage.getAppliedRoleIds();
+      Logger.info('RoleManagerPage', `加载了 ${this.appliedRoleIds.length} 个已应用角色`);
+
       // 应用筛选和排序
       await this.applyFiltersAndSort();
 
@@ -1201,6 +1292,7 @@ struct RoleManagerPage {
       this.showAddDialog = false;
       this.newRoleName = '';
       this.newRoleContent = '';
+      this.clearRoleNameError();
 
       // 重新加载数据
       await this.loadRoles();
@@ -1243,6 +1335,7 @@ struct RoleManagerPage {
         // 关闭编辑对话框
         this.showEditDialog = false;
         this.editingRole = null;
+        this.clearRoleNameError();
 
         // 重新加载数据
         await this.loadRoles();
@@ -1304,6 +1397,77 @@ struct RoleManagerPage {
   }
 
   /**
+   * 应用角色到侧边栏
+   */
+  private async applyRoleToSidebar(role: SystemPrompt): Promise<void> {
+    try {
+      this.applyingRoleId = role.id;
+      Logger.info('RoleManagerPage', `开始应用角色到侧边栏: ${role.name}`);
+
+      // 使用RoleManager应用角色到侧边栏
+      await this.roleManager.applyRoleToSidebar(role.id);
+
+      // 更新本地已应用角色列表
+      if (!this.appliedRoleIds.includes(role.id)) {
+        this.appliedRoleIds = [...this.appliedRoleIds, role.id];
+      }
+
+      promptAction.showToast({
+        message: `角色"${role.name}"已应用到侧边栏`,
+        duration: 2000
+      });
+
+      Logger.info('RoleManagerPage', `角色 ${role.name} 已成功应用到侧边栏`);
+    } catch (error) {
+      Logger.error('RoleManagerPage', `应用角色到侧边栏失败: ${(error as Error).message}`);
+      promptAction.showToast({
+        message: '应用失败，请重试',
+        duration: 1500
+      });
+    } finally {
+      this.applyingRoleId = '';
+    }
+  }
+
+  /**
+   * 从侧边栏移除角色
+   */
+  private async removeRoleFromSidebar(role: SystemPrompt): Promise<void> {
+    try {
+      this.applyingRoleId = role.id;
+      Logger.info('RoleManagerPage', `开始从侧边栏移除角色: ${role.name}`);
+
+      // 使用RoleManager从侧边栏移除角色
+      await this.roleManager.removeRoleFromSidebar(role.id);
+
+      // 更新本地已应用角色列表
+      this.appliedRoleIds = this.appliedRoleIds.filter(id => id !== role.id);
+
+      promptAction.showToast({
+        message: `角色"${role.name}"已从侧边栏移除`,
+        duration: 2000
+      });
+
+      Logger.info('RoleManagerPage', `角色 ${role.name} 已从侧边栏移除`);
+    } catch (error) {
+      Logger.error('RoleManagerPage', `从侧边栏移除角色失败: ${(error as Error).message}`);
+      promptAction.showToast({
+        message: '移除失败，请重试',
+        duration: 1500
+      });
+    } finally {
+      this.applyingRoleId = '';
+    }
+  }
+
+  /**
+   * 检查角色是否已应用到侧边栏
+   */
+  private isRoleAppliedToSidebar(roleId: string): boolean {
+    return this.appliedRoleIds.includes(roleId);
+  }
+
+  /**
    * 修复系统提示词：将未标记为角色的系统提示词转换为角色，并修复角色分类
    */
   private async fixSystemPrompts(): Promise<void> {
@@ -1360,6 +1524,63 @@ struct RoleManagerPage {
         duration: 3000
       });
     }
+  }
+
+  /**
+   * 验证角色名称（用于添加对话框）
+   */
+  private async validateRoleName(name: string): Promise<void> {
+    try {
+      const trimmedName = name.trim();
+
+      // 清空之前的错误
+      this.roleNameError = '';
+
+      // 如果为空，不显示错误（由必填标记处理）
+      if (!trimmedName) {
+        return;
+      }
+
+      // 检查是否已存在相同名称
+      if (await this.roleManager.isRoleNameExists(trimmedName)) {
+        this.roleNameError = `角色名称 "${trimmedName}" 已存在，请使用其他名称`;
+      }
+    } catch (error) {
+      Logger.error('RoleManagerPage', `验证角色名称失败: ${error}`);
+      // 验证失败时不清除错误，保持之前的错误状态
+    }
+  }
+
+  /**
+   * 验证编辑角色名称（用于编辑对话框）
+   */
+  private async validateEditRoleName(name: string): Promise<void> {
+    try {
+      const trimmedName = name.trim();
+
+      // 清空之前的错误
+      this.roleNameError = '';
+
+      // 如果为空，不显示错误（由必填标记处理）
+      if (!trimmedName) {
+        return;
+      }
+
+      // 检查是否已存在相同名称（排除当前编辑的角色）
+      if (this.editingRole && await this.roleManager.isRoleNameExists(trimmedName, this.editingRole.id)) {
+        this.roleNameError = `角色名称 "${trimmedName}" 已存在，请使用其他名称`;
+      }
+    } catch (error) {
+      Logger.error('RoleManagerPage', `验证编辑角色名称失败: ${error}`);
+      // 验证失败时不清除错误，保持之前的错误状态
+    }
+  }
+
+  /**
+   * 清空角色名称错误（在打开/关闭对话框时调用）
+   */
+  private clearRoleNameError(): void {
+    this.roleNameError = '';
   }
 
   /**

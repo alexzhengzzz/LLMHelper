@@ -17,8 +17,10 @@ interface CategoryItem {
  * 角色视图组件属性
  */
 interface RoleViewProps {
+  appliedRoles?: SystemPrompt[]; // 新增：已应用角色数据
   onRoleSelect?: (role: SystemPrompt) => void;
   onRoleFilterRequest?: (role: SystemPrompt) => void;
+  onRoleLongPress?: (role: SystemPrompt) => void; // 新增：长按回调
 }
 
 /**
@@ -26,12 +28,18 @@ interface RoleViewProps {
  */
 @ComponentV2
 export struct RoleViewComponent {
+  @Param appliedRoles: SystemPrompt[] = []; // 新增：已应用角色数据
   @Param onRoleSelect: (role: SystemPrompt) => void = () => {};
   @Param onRoleFilterRequest: (role: SystemPrompt) => void = () => {};
-  @Local roles: SystemPrompt[] = [];
+  @Param onRoleLongPress: (role: SystemPrompt) => void = () => {}; // 新增：长按回调
   @Local selectedCategory: string = 'all';
   @Local isLoading: boolean = true;
   @Local isDarkMode: boolean = false;
+
+  // 直接使用appliedRoles，不需要中间变量
+  private getDisplayRoles(): SystemPrompt[] {
+    return this.appliedRoles;
+  }
   private roleManager: RoleManager = RoleManager.getInstance();
 
   // 分类选项
@@ -45,42 +53,24 @@ export struct RoleViewComponent {
   ];
 
   aboutToAppear(): void {
-    this.loadRoles();
+    // 初始化状态
+    this.isLoading = false;
   }
 
   aboutToDisappear(): void {
     // 清理资源
   }
 
-  /**
-   * 加载角色数据
-   */
-  private async loadRoles(): Promise<void> {
-    try {
-      this.isLoading = true;
-      Logger.info('RoleViewComponent', '开始加载角色数据');
-
-      // 使用RoleManager加载角色
-      const loadedRoles = await this.roleManager.getAllRoles();
-      this.roles = loadedRoles;
-
-      Logger.info('RoleViewComponent', `角色数据加载完成，共 ${loadedRoles.length} 个角色`);
-    } catch (error) {
-      Logger.error('RoleViewComponent', `加载角色数据失败: ${error}`);
-      this.roles = [];
-    } finally {
-      this.isLoading = false;
-    }
-  }
-
+  
   /**
    * 获取当前分类的角色
    */
   private getFilteredRoles(): SystemPrompt[] {
+    const displayRoles = this.getDisplayRoles();
     if (this.selectedCategory === 'all') {
-      return this.roles;
+      return displayRoles;
     }
-    return this.roles.filter(role => role.roleCategory === this.selectedCategory);
+    return displayRoles.filter(role => role.roleCategory === this.selectedCategory);
   }
 
   /**
@@ -122,36 +112,38 @@ export struct RoleViewComponent {
   
   build() {
     Column() {
-      // 分类选择器
-      Row() {
-        Scroll() {
-          Row() {
-            ForEach(this.categories, (category: CategoryItem) => {
-              Button() {
-                Row() {
-                  Text(category.icon)
-                    .fontSize(14)
-                    .margin({ right: 4 });
-                  Text(category.name)
-                    .fontSize(14)
-                    .fontWeight(this.selectedCategory === category.id ? FontWeight.Medium : FontWeight.Normal);
+      // 分类选择器 - 仅在显示所有角色时显示，已应用角色时不显示
+      if (this.appliedRoles.length === 0) {
+        Row() {
+          Scroll() {
+            Row() {
+              ForEach(this.categories, (category: CategoryItem) => {
+                Button() {
+                  Row() {
+                    Text(category.icon)
+                      .fontSize(14)
+                      .margin({ right: 4 });
+                    Text(category.name)
+                      .fontSize(14)
+                      .fontWeight(this.selectedCategory === category.id ? FontWeight.Medium : FontWeight.Normal);
+                  }
+                  .padding({ left: 12, right: 12, top: 6, bottom: 6 });
                 }
-                .padding({ left: 12, right: 12, top: 6, bottom: 6 });
-              }
-              .backgroundColor(this.selectedCategory === category.id ? COMMON_CONSTANTS.THEME_COLORS.primary : Color.Transparent)
-              .fontColor(this.selectedCategory === category.id ? Color.White : (this.isDarkMode ? '#CCCCCC' : '#666666'))
-              .borderRadius(16)
-              .onClick(() => {
-                this.onSelectCategory(category.id);
+                .backgroundColor(this.selectedCategory === category.id ? COMMON_CONSTANTS.THEME_COLORS.primary : Color.Transparent)
+                .fontColor(this.selectedCategory === category.id ? Color.White : (this.isDarkMode ? '#CCCCCC' : '#666666'))
+                .borderRadius(16)
+                .onClick(() => {
+                  this.onSelectCategory(category.id);
+                });
               });
-            });
+            }
           }
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
         }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
+        .width('100%')
+        .margin({ bottom: 16 });
       }
-      .width('100%')
-      .margin({ bottom: 16 });
 
       // 角色列表
       if (this.isLoading) {
@@ -177,11 +169,12 @@ export struct RoleViewComponent {
             Text('🎭')
               .fontSize(48)
               .margin({ bottom: 16 });
-            Text(this.selectedCategory === 'all' ? '暂无角色' : `暂无${this.getCategoryDisplayName(this.selectedCategory)}`)
+            // 侧边栏模式：显示已应用角色为空
+            Text('暂无应用的角色')
               .fontSize(16)
               .fontColor('#999999')
               .margin({ bottom: 8 });
-            Text('快去创建你的第一个AI角色吧！')
+            Text('在角色管理页面将角色应用到侧边栏')
               .fontSize(14)
               .fontColor('#CCCCCC');
           }
@@ -201,6 +194,9 @@ export struct RoleViewComponent {
                   },
                   onViewHistory: (selectedRole: SystemPrompt) => {
                     this.onRoleFilterRequested(selectedRole);
+                  },
+                  onRoleLongPress: (selectedRole: SystemPrompt) => {
+                    this.onRoleLongPress(selectedRole);
                   }
                 });
               }

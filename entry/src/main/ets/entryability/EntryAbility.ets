@@ -9,6 +9,7 @@ import { AppConfigManager } from '../utils/AppConfigManager';
 import { LocalToolManager } from '../services/LocalToolManager';
 import { RoleManager } from '../utils/RoleManager';
 import { ServerConfigManager } from '../utils/ServerConfigManager';
+import { AppInitializer } from '../utils/AppInitializer';
 export default class EntryAbility extends UIAbility {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private appConfigManager: AppConfigManager = AppConfigManager.getInstance();
@@ -16,16 +17,32 @@ export default class EntryAbility extends UIAbility {
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onCreate');
-    
+
     // 设置应用上下文
     AppContext.getInstance().setContext(this.context);
+
+    // 1. 优先初始化应用核心系统（包括存储）
+    AppInitializer.initialize().then(() => {
+      hilog.info(0x0000, 'testTag', 'AppInitializer initialized successfully');
+
+      // 2. 初始化其他管理器
+      this.initializeOtherManagers();
+    }).catch((error: Error) => {
+      hilog.error(0x0000, 'testTag', `Failed to initialize AppInitializer: ${error.message}`);
+
+      // 即使应用初始化失败，也要尝试初始化其他管理器
+      this.initializeOtherManagers();
+    });
+  }
+
+  private initializeOtherManagers(): void {
     try {
       LocalToolManager.getInstance(this.context);
     } catch (e) {
       hilog.error(0x0000, 'testTag', `Failed to initialize LocalToolManager: ${e.message}`);
     }
 
-    // 初始化服务器配置管理器（优先级最高）
+    // 初始化服务器配置管理器
     this.serverConfigManager.initialize().then(() => {
       hilog.info(0x0000, 'testTag', 'ServerConfigManager initialized successfully');
     }).catch((error: Error) => {

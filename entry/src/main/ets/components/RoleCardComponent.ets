@@ -12,6 +12,7 @@ interface RoleCardProps {
   role: SystemPrompt;
   onRoleSelect?: (role: SystemPrompt) => void;
   onViewHistory?: (role: SystemPrompt) => void;
+  onRoleLongPress?: (role: SystemPrompt) => void; // 新增：长按回调
 }
 
 /**
@@ -22,6 +23,7 @@ export struct RoleCardComponent {
   @Param @Require role: SystemPrompt = new SystemPrompt();
   @Param onRoleSelect: (role: SystemPrompt) => void = () => {};
   @Param onViewHistory: (role: SystemPrompt) => void = () => {};
+  @Param onRoleLongPress: (role: SystemPrompt) => void = () => {}; // 新增：长按回调
   @Local isDarkMode: boolean = false;
   @Local isPressed: boolean = false;
   @Local isHovered: boolean = false;
@@ -172,7 +174,14 @@ export struct RoleCardComponent {
     })
     .onHover((isHovered: boolean) => {
       this.isHovered = isHovered;
-    });
+    })
+    .gesture(
+      // 长按手势
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          this.onRoleLongPress(this.role);
+        })
+    );
   }
 
   /**

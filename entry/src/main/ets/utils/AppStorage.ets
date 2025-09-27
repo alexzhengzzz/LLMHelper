@@ -17,6 +17,7 @@ const CURRENT_MODEL_KEY = 'current_model_config'; // 当前选择的模型配置
 const FONT_SETTINGS_KEY = 'font_settings'; // 字体设置
 const MCP_CONFIGURATION_KEY = 'mcp_configuration'; // MCP配置
 const MCP_TOOLS_CONFIG_KEY = 'mcp_tools_config'; // MCP工具开关配置
+const APPLIED_ROLES_KEY = 'applied_roles'; // 已应用到侧边栏的角色ID列表
 
 // 会话管理相关存储键
 const SESSIONS_KEY = 'chat_sessions';
@@ -211,20 +212,106 @@ export class AppStorage {
   private static avatarListeners: ((settings: AvatarSettings) => void)[] = [];
   private static userProfileListeners: ((profile: UserProfile) => void)[] = [];
   private static sessionDataClearedListeners: (() => void)[] = [];
+  private static initializationPromise: Promise<preferences.Preferences> | null = null;
+  private static initializationRetryCount: number = 0;
+  private static readonly MAX_RETRY_COUNT: number = 3;
+  private static readonly RETRY_DELAY: number = 1000; // 1秒
+
+  private static async delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private static async initializeStorage(): Promise<preferences.Preferences> {
+    if (AppStorage.storage) {
+      return AppStorage.storage;
+    }
+
+    if (AppStorage.initializationPromise) {
+      return AppStorage.initializationPromise;
+    }
+
+    AppStorage.initializationPromise = new Promise(async (resolve, reject) => {
+      let lastError: Error | null = null;
+
+      for (let attempt = 1; attempt <= AppStorage.MAX_RETRY_COUNT; attempt++) {
+        try {
+          Logger.debug('AppStorage', `正在初始化存储，尝试 ${attempt}/${AppStorage.MAX_RETRY_COUNT}`);
+
+          const context = getContext() as common.UIAbilityContext;
+          if (!context) {
+            throw new Error('Context is not available');
+          }
+
+          Logger.debug('AppStorage', `Context获取成功: ${!!context}`);
+          AppStorage.storage = preferences.getPreferencesSync(context, { name: 'chat_storage' });
+          Logger.info('AppStorage', '存储初始化成功');
+
+          AppStorage.initializationRetryCount = 0;
+          resolve(AppStorage.storage);
+          return;
+        } catch (e) {
+          lastError = e as Error;
+          Logger.warn('AppStorage', `存储初始化失败，尝试 ${attempt}/${AppStorage.MAX_RETRY_COUNT}: ${e}`);
+
+          if (attempt < AppStorage.MAX_RETRY_COUNT) {
+            Logger.debug('AppStorage', `等待 ${AppStorage.RETRY_DELAY}ms 后重试`);
+            await AppStorage.delay(AppStorage.RETRY_DELAY);
+          }
+        }
+      }
+
+      AppStorage.initializationRetryCount++;
+      Logger.error('AppStorage', `存储初始化彻底失败，重试次数: ${AppStorage.initializationRetryCount}`);
+      AppStorage.initializationPromise = null;
+      reject(new Error(`Storage initialization failed after ${AppStorage.MAX_RETRY_COUNT} attempts: ${lastError?.message}`));
+    });
+
+    return AppStorage.initializationPromise;
+  }
 
   private static getStorage(): preferences.Preferences {
     if (!AppStorage.storage) {
-      try {
-        const context = getContext() as common.UIAbilityContext;
-        Logger.debug('AppStorage', `正在初始化存储，Context: ${!!context}`);
-        AppStorage.storage = preferences.getPreferencesSync(context, { name: 'chat_storage' });
-        Logger.debug('AppStorage', '存储初始化成功');
-      } catch (e) {
-        Logger.error('AppStorage', `Failed to initialize storage: ${e}`);
-        throw Error('Storage initialization failed');
-      }
+      throw new Error('Storage not initialized. Please call initializeStorage() first.');
     }
     return AppStorage.storage;
+  }
+
+  static async getStorageAsync(): Promise<preferences.Preferences> {
+    try {
+      return await AppStorage.initializeStorage();
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to get storage: ${e}`);
+      throw new Error();;
+    }
+  }
+
+  /**
+   * 安全存储操作包装器 - 自动处理初始化
+   */
+  static async safeStorageOperation<T>(operation: (storage: preferences.Preferences) => Promise<T>): Promise<T> {
+    try {
+      const storage = await AppStorage.getStorageAsync();
+      return await operation(storage);
+    } catch (e) {
+      Logger.error('AppStorage', `Safe storage operation failed: ${e}`);
+      throw new Error(e);
+    }
+  }
+
+  /**
+   * 安全同步存储操作包装器
+   */
+  static safeSyncStorageOperation<T>(operation: (storage: preferences.Preferences) => T): T | null {
+    try {
+      if (!AppStorage.storage) {
+        Logger.warn('AppStorage', 'Storage not initialized for sync operation');
+        return null;
+      }
+      return operation(AppStorage.storage);
+    } catch (e) {
+      Logger.error('AppStorage', `Safe sync storage operation failed: ${e}`);
+      return null;
+    }
   }
 
   static getPreferences(): preferences.Preferences {
@@ -234,126 +321,122 @@ export class AppStorage {
   static async saveMessages(messages: Message[]): Promise<void> {
     try {
       Logger.info('AppStorage', `正在保存 ${messages.length} 条消息`);
-      const storage = AppStorage.getStorage();
+      const storage = await AppStorage.getStorageAsync();
       const jsonStr = JSON.stringify(messages);
-      console.info(`消息JSON长度: ${jsonStr.length}`);
+      Logger.debug('AppStorage', `消息JSON长度: ${jsonStr.length}`);
       await storage.put(MESSAGES_KEY, jsonStr);
       await storage.flush();
-      console.info('消息保存成功');
+      Logger.info('AppStorage', '消息保存成功');
     } catch (e) {
-      console.error('Failed to save messages.', e);
+      Logger.error('AppStorage', `Failed to save messages: ${e}`);
+      throw new Error(e)
     }
   }
 
   static async getMessages(): Promise<Message[]> {
     try {
-      console.info('正在读取历史消息');
-      const storage = AppStorage.getStorage();
+      Logger.info('AppStorage', '正在读取历史消息');
+      const storage = await AppStorage.getStorageAsync();
       const messagesStr = await storage.get(MESSAGES_KEY, '[]');
-      console.info(`读取到的JSON长度: ${(messagesStr as string).length}`);
+      Logger.debug('AppStorage', `读取到的JSON长度: ${(messagesStr as string).length}`);
       const messages: Message[] = JSON.parse(messagesStr as string);
-      console.info(`解析后消息数量: ${messages.length}`);
-      console.info('第一条消息样例:', messages.length > 0 ? JSON.stringify(messages[0]) : 'N/A');
+      Logger.info('AppStorage', `解析后消息数量: ${messages.length}`);
+      if (messages.length > 0) {
+        Logger.debug('AppStorage', `第一条消息样例: ${JSON.stringify(messages[0])}`);
+      }
       return messages;
     } catch (e) {
-      console.error('Failed to get messages.', e);
+      Logger.error('AppStorage', `Failed to get messages: ${e}`);
       return [];
     }
   }
 
   static async clearMessages(): Promise<void> {
     try {
-      const storage = AppStorage.getStorage();
+      const storage = await AppStorage.getStorageAsync();
       await storage.delete(MESSAGES_KEY);
       await storage.flush();
+      Logger.info('AppStorage', '消息已清空');
     } catch (e) {
-      console.error('Failed to clear messages.', e);
+      Logger.error('AppStorage', `Failed to clear messages: ${e}`);
+      throw new Error(e)
     }
   }
 
   // System prompt management methods
   static async saveSystemPrompts(prompts: SystemPrompt[]): Promise<void> {
     try {
-      console.info('=== 开始保存系统提示词 ===');
-      console.info('当前时间:', new Date().toISOString());
-      console.info(`正在保存 ${prompts.length} 条系统提示词`);
-      
+      Logger.info('AppStorage', '=== 开始保存系统提示词 ===');
+      Logger.info('AppStorage', `正在保存 ${prompts.length} 条系统提示词`);
+
       // 详细打印每条提示词
       prompts.forEach((prompt, index) => {
-        console.info(`保存提示词[${index}]:`);
-        console.info(`  ID: ${prompt.id}`);
-        console.info(`  名称: ${prompt.name}`);
-        console.info(`  内容: ${prompt.content.substring(0, 50)}...`);
-        console.info(`  时间戳: ${prompt.timestamp}`);
+        Logger.debug('AppStorage', `保存提示词[${index}]: ID=${prompt.id}, 名称=${prompt.name}`);
       });
-      
+
       // 转换为可序列化对象
       const serializablePrompts: SystemPromptData[] = prompts.map(prompt => prompt.toObject());
-      
-      const storage = AppStorage.getStorage();
+
+      const storage = await AppStorage.getStorageAsync();
       const jsonStr = JSON.stringify(serializablePrompts);
-      console.info(`系统提示词JSON长度: ${jsonStr.length}`);
-      console.info(`保存的JSON内容: ${jsonStr}`);
-      
+      Logger.debug('AppStorage', `系统提示词JSON长度: ${jsonStr.length}`);
+
       await storage.put(SYSTEM_PROMPTS_KEY, jsonStr);
       await storage.flush();
-      
-      console.info('✅ 系统提示词保存成功');
-      console.info('=== 系统提示词保存完成 ===');
+
+      Logger.info('AppStorage', '✅ 系统提示词保存成功');
     } catch (e) {
-      console.error('❌ Failed to save system prompts.', e);
-      console.error('错误堆栈:', (e as Error).stack);
+      Logger.error('AppStorage', `❌ Failed to save system prompts: ${e}`);
+      if (e instanceof Error) {
+        Logger.error('AppStorage', `错误堆栈: ${e.stack}`);
+      }
+      throw new Error(e)
     }
   }
 
   static async getSystemPrompts(): Promise<SystemPrompt[]> {
     try {
-      console.info('=== 开始读取系统提示词 ===');
-      console.info('当前时间:', new Date().toISOString());
-      
-      const storage = AppStorage.getStorage();
+      Logger.info('AppStorage', '=== 开始读取系统提示词 ===');
+
+      const storage = await AppStorage.getStorageAsync();
       const promptsStr = await storage.get(SYSTEM_PROMPTS_KEY, '[]');
-      console.info(`读取到的原始字符串: ${promptsStr}`);
-      console.info(`读取到的字符串长度: ${(promptsStr as string).length}`);
-      
+      Logger.debug('AppStorage', `读取到的字符串长度: ${(promptsStr as string).length}`);
+
       if (!promptsStr || promptsStr === '[]') {
-        console.info('⚠️ 没有找到系统提示词，返回空数组');
-        console.info('=== 系统提示词读取完成 ===');
+        Logger.info('AppStorage', '⚠️ 没有找到系统提示词，返回空数组');
         return [];
       }
-      
+
       const parsedObjects: SystemPromptData[] = JSON.parse(promptsStr as string);
       const prompts: SystemPrompt[] = parsedObjects.map((obj: SystemPromptData) => SystemPrompt.fromObject(obj));
-      console.info(`解析后系统提示词数量: ${prompts.length}`);
-      
+      Logger.info('AppStorage', `解析后系统提示词数量: ${prompts.length}`);
+
       // 详细打印每条提示词
       prompts.forEach((prompt, index) => {
-        console.info(`读取提示词[${index}]:`);
-        console.info(`  ID: ${prompt.id}`);
-        console.info(`  名称: ${prompt.name}`);
-        console.info(`  内容: ${prompt.content.substring(0, 50)}...`);
-        console.info(`  时间戳: ${prompt.timestamp}`);
+        Logger.debug('AppStorage', `读取提示词[${index}]: ID=${prompt.id}, 名称=${prompt.name}`);
       });
-      
-      console.info('✅ 系统提示词读取成功');
-      console.info('=== 系统提示词读取完成 ===');
-      
+
+      Logger.info('AppStorage', '✅ 系统提示词读取成功');
       return prompts;
     } catch (e) {
-      console.error('❌ Failed to get system prompts.', e);
-      console.error('错误详情:', (e as Error).stack);
-      console.info('=== 系统提示词读取失败 ===');
+      Logger.error('AppStorage', `❌ Failed to get system prompts: ${e}`);
+      if (e instanceof Error) {
+        Logger.error('AppStorage', `错误详情: ${e.stack}`);
+      }
       return [];
     }
   }
 
   static async addSystemPrompt(prompt: SystemPrompt): Promise<void> {
     try {
+      Logger.info('AppStorage', `添加系统提示词: ${prompt.name}`);
       const prompts = await AppStorage.getSystemPrompts();
       prompts.push(prompt);
       await AppStorage.saveSystemPrompts(prompts);
+      Logger.info('AppStorage', '系统提示词添加成功');
     } catch (e) {
-      console.error('Failed to add system prompt.', e);
+      Logger.error('AppStorage', `Failed to add system prompt: ${e}`);
+      throw new Error(e)
     }
   }
 
@@ -516,16 +599,17 @@ export class AppStorage {
   static async saveAvatarSettings(settings: AvatarSettings): Promise<void> {
     try {
       Logger.info('AppStorage', `正在保存头像设置: ${JSON.stringify(settings.toObject())}`);
-      const storage = AppStorage.getStorage();
+      const storage = await AppStorage.getStorageAsync();
       const jsonStr = JSON.stringify(settings.toObject());
       await storage.put(AVATAR_SETTINGS_KEY, jsonStr);
       await storage.flush();
       Logger.info('AppStorage', '头像设置保存成功');
-      
+
       // 通知所有监听器
       AppStorage.notifyAvatarListeners(settings.clone());
     } catch (e) {
       Logger.error('AppStorage', `Failed to save avatar settings: ${e}`);
+      throw new Error(e)
     }
   }
 
@@ -535,16 +619,16 @@ export class AppStorage {
   static async getAvatarSettings(): Promise<AvatarSettings> {
     try {
       Logger.info('AppStorage', '正在读取头像设置');
-      const storage = AppStorage.getStorage();
+      const storage = await AppStorage.getStorageAsync();
       const settingsStr = await storage.get(AVATAR_SETTINGS_KEY, '');
-      
+
       if (!settingsStr) {
         Logger.info('AppStorage', '没有找到头像设置，使用默认设置');
         const defaultSettings = AppStorage.getDefaultAvatarSettings();
         await AppStorage.saveAvatarSettings(defaultSettings);
         return defaultSettings;
       }
-      
+
       const settingsObj: AvatarSettingsData = JSON.parse(settingsStr as string);
       const settings = new AvatarSettings(
         settingsObj.userAvatarType,
@@ -834,17 +918,17 @@ export class AppStorage {
   static async getSessions(): Promise<Session[]> {
     try {
       Logger.debug('AppStorage', '读取会话列表');
-      const storage = AppStorage.getStorage();
+      const storage = await AppStorage.getStorageAsync();
       const sessionsStr = await storage.get(SESSIONS_KEY, '[]');
-      
+
       if (!sessionsStr || sessionsStr === '[]') {
         Logger.debug('AppStorage', '没有找到会话，返回空数组');
         return [];
       }
-      
+
       const parsedObjects: SessionData[] = JSON.parse(sessionsStr as string);
       const sessions: Session[] = parsedObjects.map((obj: SessionData) => Session.fromObject(obj));
-      
+
       Logger.debug('AppStorage', `读取到 ${sessions.length} 个会话`);
       return sessions;
     } catch (e) {
@@ -2043,6 +2127,120 @@ export class AppStorage {
     } catch (e) {
       Logger.error('AppStorage', `Failed to reset MCP tools config: ${e}`);
       throw new Error(`Failed to reset MCP tools config: ${e}`);
+    }
+  }
+
+  //=================== 已应用角色管理相关方法 ===================
+
+  /**
+   * 获取已应用到侧边栏的角色ID列表
+   */
+  static async getAppliedRoleIds(): Promise<string[]> {
+    try {
+      Logger.debug('AppStorage', '获取已应用角色ID列表');
+      const storage = AppStorage.getStorage();
+      const appliedRolesStr = await storage.get(APPLIED_ROLES_KEY, '') as string;
+
+      if (!appliedRolesStr) {
+        Logger.debug('AppStorage', '没有找到已应用角色列表，返回空数组');
+        return [];
+      }
+
+      const roleIds = JSON.parse(appliedRolesStr) as string[];
+      Logger.debug('AppStorage', `找到 ${roleIds.length} 个已应用角色`);
+      return roleIds;
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to get applied role ids: ${e}`);
+      return [];
+    }
+  }
+
+  /**
+   * 保存已应用到侧边栏的角色ID列表
+   */
+  static async saveAppliedRoleIds(roleIds: string[]): Promise<void> {
+    try {
+      Logger.info('AppStorage', `保存 ${roleIds.length} 个已应用角色ID`);
+      const storage = AppStorage.getStorage();
+      await storage.put(APPLIED_ROLES_KEY, JSON.stringify(roleIds));
+      await storage.flush();
+      Logger.info('AppStorage', '已应用角色ID列表保存成功');
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to save applied role ids: ${e}`);
+      throw new Error(`Failed to save applied role ids: ${e}`);
+    }
+  }
+
+  /**
+   * 添加角色到已应用列表
+   */
+  static async addAppliedRole(roleId: string): Promise<void> {
+    try {
+      Logger.info('AppStorage', `添加角色到已应用列表: ${roleId}`);
+      const currentRoleIds = await AppStorage.getAppliedRoleIds();
+
+      // 去重检查
+      if (!currentRoleIds.includes(roleId)) {
+        currentRoleIds.push(roleId);
+        await AppStorage.saveAppliedRoleIds(currentRoleIds);
+        Logger.info('AppStorage', `角色 ${roleId} 已添加到已应用列表`);
+      } else {
+        Logger.debug('AppStorage', `角色 ${roleId} 已存在于已应用列表中`);
+      }
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to add applied role: ${e}`);
+      throw new Error(`Failed to add applied role: ${e}`);
+    }
+  }
+
+  /**
+   * 从已应用列表中移除角色
+   */
+  static async removeAppliedRole(roleId: string): Promise<void> {
+    try {
+      Logger.info('AppStorage', `从已应用列表中移除角色: ${roleId}`);
+      const currentRoleIds = await AppStorage.getAppliedRoleIds();
+      const updatedRoleIds = currentRoleIds.filter(id => id !== roleId);
+
+      if (updatedRoleIds.length !== currentRoleIds.length) {
+        await AppStorage.saveAppliedRoleIds(updatedRoleIds);
+        Logger.info('AppStorage', `角色 ${roleId} 已从已应用列表中移除`);
+      } else {
+        Logger.debug('AppStorage', `角色 ${roleId} 不在已应用列表中`);
+      }
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to remove applied role: ${e}`);
+      throw new Error(`Failed to remove applied role: ${e}`);
+    }
+  }
+
+  /**
+   * 检查角色是否已被应用到侧边栏
+   */
+  static async isRoleApplied(roleId: string): Promise<boolean> {
+    try {
+      Logger.debug('AppStorage', `检查角色是否已应用: ${roleId}`);
+      const appliedRoleIds = await AppStorage.getAppliedRoleIds();
+      const isApplied = appliedRoleIds.includes(roleId);
+      Logger.debug('AppStorage', `角色 ${roleId} 应用状态: ${isApplied}`);
+      return isApplied;
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to check if role is applied: ${e}`);
+      return false;
+    }
+  }
+
+  /**
+   * 清空已应用角色列表
+   */
+  static async clearAppliedRoles(): Promise<void> {
+    try {
+      Logger.info('AppStorage', '清空已应用角色列表');
+      await AppStorage.saveAppliedRoleIds([]);
+      Logger.info('AppStorage', '已应用角色列表已清空');
+    } catch (e) {
+      Logger.error('AppStorage', `Failed to clear applied roles: ${e}`);
+      throw new Error(`Failed to clear applied roles: ${e}`);
     }
   }
 

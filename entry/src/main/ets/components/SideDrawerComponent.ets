@@ -1,4 +1,4 @@
-import { router } from '@kit.ArkUI';
+import { router, promptAction } from '@kit.ArkUI';
 import { curves } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { ThemeManager } from '../utils/ThemeManager';
@@ -12,6 +12,7 @@ import { SwipeableSessionItemComponent } from './SwipeableSessionItemComponent';
 import { NewSessionDialogComponent } from './NewSessionDialogComponent';
 import { RoleViewComponent } from './RoleViewComponent';
 import { AppConfigManager } from '../utils/AppConfigManager';
+import { RoleManager } from '../utils/RoleManager';
 
 interface AvatarOption {
   text: string;
@@ -63,9 +64,12 @@ export struct SideDrawerComponent {
   @Local filteredSessions: Session[] = []; // 搜索过滤后的会话列表
   @Local selectedRoleFilter: SystemPrompt | null = null; // 选中的角色筛选器
   @Local showRoleFilter: boolean = false; // 是否显示角色筛选器
-  
+  @Local appliedRoles: SystemPrompt[] = []; // 已应用到侧边栏的角色列表
+  @Local isDeletingRole: string = ''; // 正在删除的角色ID（用于显示loading状态）
+
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private userProfileManager: UserProfileManager = UserProfileManager.getInstance();
+  private roleManager: RoleManager = RoleManager.getInstance();
   private swipeableItemRefs: Map<string, SwipeableSessionItemComponent> = new Map(); // 侧滑组件引用
   private debounceTimer: number = 0; // 防抖定时器
   private readonly DEBOUNCE_DELAY = 300; // 防抖延迟时间（毫秒）
@@ -124,8 +128,31 @@ export struct SideDrawerComponent {
     // 启动进入动画
     this.startEnterAnimation();
 
-    // 初始化过滤后的会话列表
-    this.filteredSessions = [...this.sessions];
+    // 加载已应用的角色
+    this.loadAppliedRoles();
+
+    // 延迟初始化会话列表，确保父组件已传递完整的sessions参数
+    setTimeout(() => {
+      this.updateFilteredSessions();
+
+      // 如果会话列表仍为空，设置定期检查机制
+      if (this.sessions.length === 0) {
+        Logger.info('SideDrawerComponent', '会话列表为空，设置定期检查机制');
+        let checkCount = 0;
+        const maxChecks = 10; // 最多检查10次
+        const checkInterval = setInterval(() => {
+          checkCount++;
+          if (this.sessions.length > 0) {
+            Logger.info('SideDrawerComponent', `检测到会话数据已加载，数量: ${this.sessions.length}`);
+            this.updateFilteredSessions();
+            clearInterval(checkInterval);
+          } else if (checkCount >= maxChecks) {
+            Logger.info('SideDrawerComponent', '达到最大检查次数，停止检查');
+            clearInterval(checkInterval);
+          }
+        }, 500); // 每500ms检查一次
+      }
+    }, 100);
   }
 
   /**
@@ -757,11 +784,15 @@ export struct SideDrawerComponent {
   @Builder
   buildRoleSection() {
     RoleViewComponent({
+      appliedRoles: this.appliedRoles, // 传递已应用角色数据
       onRoleSelect: (role: SystemPrompt) => {
         this.handleRoleSelect(role);
       },
       onRoleFilterRequest: (role: SystemPrompt) => {
         this.setRoleFilter(role);
+      },
+      onRoleLongPress: (role: SystemPrompt) => {
+        this.showRemoveRoleDialog(role);
       }
     })
   }
@@ -1124,13 +1155,22 @@ export struct SideDrawerComponent {
    * 更新过滤后的会话列表
    */
   private updateFilteredSessions(): void {
-    this.performGlobalSearch();
+    Logger.debug('SideDrawerComponent', `更新过滤会话列表，原始会话数量: ${this.sessions.length}`);
+
+    // 如果没有搜索关键词和角色筛选，直接使用原始会话列表
+    if (!this.globalSearchQuery.trim() && !this.selectedRoleFilter) {
+      this.filteredSessions = [...this.sessions]; // 创建新数组确保响应式更新
+      Logger.debug('SideDrawerComponent', `直接使用原始会话列表，数量: ${this.filteredSessions.length}`);
+    } else {
+      this.performGlobalSearch();
+    }
   }
 
   /**
    * 当sessions参数变化时自动调用
    */
   protected onSessionsChanged(): void {
+    Logger.info('SideDrawerComponent', `sessions参数变化，当前会话数量: ${this.sessions.length}`);
     this.updateFilteredSessions();
   }
 
@@ -1340,5 +1380,72 @@ export struct SideDrawerComponent {
     } catch (error) {
       Logger.error('SideDrawerComponent', `更新头像设置失败: ${error}`);
     }
+  }
+
+  /**
+   * 加载已应用的角色
+   */
+  private async loadAppliedRoles(): Promise<void> {
+    try {
+      Logger.info('SideDrawerComponent', '开始加载已应用的角色');
+      this.appliedRoles = await this.roleManager.getAppliedRoles();
+      Logger.info('SideDrawerComponent', `加载了 ${this.appliedRoles.length} 个已应用角色`);
+    } catch (error) {
+      Logger.error('SideDrawerComponent', `加载已应用角色失败: ${error}`);
+      this.appliedRoles = [];
+    }
+  }
+
+  /**
+   * 从侧边栏移除角色（长按删除）
+   */
+  private async removeRoleFromSidebar(role: SystemPrompt): Promise<void> {
+    try {
+      this.isDeletingRole = role.id;
+      Logger.info('SideDrawerComponent', `开始从侧边栏移除角色: ${role.name}`);
+
+      // 使用RoleManager从侧边栏移除角色
+      await this.roleManager.removeRoleFromSidebar(role.id);
+
+      // 更新本地已应用角色列表 - 创建新数组确保触发子组件更新
+      this.appliedRoles = [...this.appliedRoles.filter(r => r.id !== role.id)];
+
+      Logger.info('SideDrawerComponent', `角色 ${role.name} 已从侧边栏移除，剩余角色数: ${this.appliedRoles.length}`);
+    } catch (error) {
+      Logger.error('SideDrawerComponent', `从侧边栏移除角色失败: ${error}`);
+    } finally {
+      this.isDeletingRole = '';
+    }
+  }
+
+  /**
+   * 显示移除角色确认对话框
+   */
+  private showRemoveRoleDialog(role: SystemPrompt): void {
+    promptAction.showDialog({
+      title: '移除角色',
+      message: `确定要将角色"${role.name}"从侧边栏移除吗？`,
+      buttons: [
+        {
+          text: '取消',
+          color: '#666666'
+        },
+        {
+          text: '确定',
+          color: '#FF4444'
+        }
+      ]
+    }).then((result) => {
+      if (result.index === 1) { // 确定按钮
+        this.removeRoleFromSidebar(role);
+      }
+    });
+  }
+
+  /**
+   * 刷新已应用角色列表（供外部调用）
+   */
+  public refreshAppliedRoles(): void {
+    this.loadAppliedRoles();
   }
 }
