@@ -11,8 +11,8 @@ export struct MemoryItemComponent {
   @Param isDarkMode: boolean = false;
 
   // 回调函数
-  onDelete?: (id: string) => void;
-  onEdit?: (item: MemoryItem) => void;
+  @Param onDelete: (id: string) => void = () => {};
+  @Param onEdit: (item: MemoryItem) => void = () => {};
 
   // 内部状态
   @Local private isExpanded: boolean = false;
@@ -207,9 +207,7 @@ export struct MemoryItemComponent {
               .backgroundColor(Color.Transparent)
               .padding(4)
               .onClick(() => {
-                if (this.onEdit) {
-                  this.onEdit(this.memoryItem);
-                }
+                this.onEdit(this.memoryItem);
               })
 
             // 删除按钮
@@ -219,9 +217,7 @@ export struct MemoryItemComponent {
               .backgroundColor(Color.Transparent)
               .padding(4)
               .onClick(() => {
-                if (this.onDelete) {
-                  this.onDelete(this.memoryItem.id);
-                }
+                this.onDelete(this.memoryItem.id);
               })
           }
         }

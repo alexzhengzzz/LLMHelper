@@ -601,6 +601,43 @@ ${memoryLines.join('\n')}
   }
 
   /**
+   * 更新记忆项（兼容MemoryItem接口）
+   */
+  async updateMemoryItem(id: string, item: MemoryItemWithoutId): Promise<MemoryItem> {
+    const request: UpdateMemoryRequest = {
+      content: item.content,
+      tags: item.tags,
+      category: item.category,
+      importance: item.importance,
+      isActive: item.isActive
+    };
+
+    Logger.debug('MemoryManager', `updateMemoryItem调用，ID: ${id}, 内容长度: ${item.content.length}`);
+    const result = await this.updateMemory(id, request);
+    if (result.success && result.data) {
+      const fragment = Array.isArray(result.data) ? result.data[0] : result.data;
+      // 🔧 修复：使用动态生成的title而不是传入的title
+      const generatedTitle = `记忆-${fragment.createdAt}`;
+      Logger.debug('MemoryManager', `updateMemoryItem成功，生成title: ${generatedTitle}`);
+      return {
+        id: fragment.id,
+        title: generatedTitle, // 使用动态生成的title
+        content: fragment.content,
+        tags: fragment.tags,
+        category: fragment.category,
+        importance: fragment.importance,
+        isActive: fragment.isActive,
+        createdAt: fragment.createdAt,
+        updatedAt: fragment.updatedAt,
+        usageCount: fragment.usageCount,
+        lastUsedAt: fragment.lastUsedAt
+      } as MemoryItem;
+    }
+    Logger.error('MemoryManager', `updateMemoryItem失败: ${result.message}`);
+    throw new Error(result.message || '更新记忆失败');
+  }
+
+  /**
    * 删除记忆项（兼容MemoryItem接口）
    */
   async deleteMemoryItem(id: string): Promise<boolean> {

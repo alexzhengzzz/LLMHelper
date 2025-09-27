@@ -37,6 +37,15 @@ struct MemoryManagerPage {
   @Local private newMemoryImportance: MemoryImportance = MemoryImportance.MEDIUM;
   @Local private newMemoryTags: string = '';
 
+  // 编辑记忆表单
+  @Local private showEditDialog: boolean = false;
+  @Local private editMemoryId: string = '';
+  @Local private editMemoryTitle: string = '';
+  @Local private editMemoryContent: string = '';
+  @Local private editMemoryCategory: MemoryCategory = MemoryCategory.PERSONAL;
+  @Local private editMemoryImportance: MemoryImportance = MemoryImportance.MEDIUM;
+  @Local private editMemoryTags: string = '';
+
   private readonly PAGE_ENTER_OFFSET: number = 96;
   @Local private pageTranslateX: number = this.PAGE_ENTER_OFFSET;
   @Local private pageOpacity: number = BasicAnimations.HIDDEN_OPACITY;
@@ -110,10 +119,10 @@ struct MemoryManagerPage {
     try {
       const items: MemoryItem[] = await this.memoryManager.getMemoryItems();
 
-      // 转换为带ID的数组
-      const memoryItemsWithId: MemoryItemWithId[] = items.map((item: MemoryItem, index: number) => {
+      // 转换为带ID的数组，保持原始ID
+      const memoryItemsWithId: MemoryItemWithId[] = items.map((item: MemoryItem) => {
         const memoryItem: MemoryItemWithId = {
-          id: `memory_${index}_${Date.now()}`,
+          id: item.id, // 🔧 修复：使用原始ID而不是生成新ID
           title: item.title,
           content: item.content,
           tags: item.tags,
@@ -130,7 +139,7 @@ struct MemoryManagerPage {
 
       this.memoryItems = memoryItemsWithId;
 
-      Logger.info('MemoryManagerPage', `记忆列表加载成功: ${this.memoryItems.length}个`);
+      Logger.info('MemoryManagerPage', `记忆列表加载成功: ${this.memoryItems.length}个，ID示例: ${this.memoryItems.length > 0 ? this.memoryItems[0].id : 'none'}`);
 
     } catch (error) {
       Logger.error('MemoryManagerPage', `加载记忆列表失败: ${error}`);
@@ -177,12 +186,31 @@ struct MemoryManagerPage {
     this.newMemoryTags = '';
   }
 
+  private showEditMemoryDialog(item: MemoryItem): void {
+    this.editMemoryId = item.id;
+    this.editMemoryTitle = item.title;
+    this.editMemoryContent = item.content;
+    this.editMemoryCategory = item.category;
+    this.editMemoryImportance = item.importance;
+    this.editMemoryTags = item.tags.join(', ');
+    this.showEditDialog = true;
+  }
+
+  private resetEditMemoryForm(): void {
+    this.editMemoryId = '';
+    this.editMemoryTitle = '';
+    this.editMemoryContent = '';
+    this.editMemoryCategory = MemoryCategory.PERSONAL;
+    this.editMemoryImportance = MemoryImportance.MEDIUM;
+    this.editMemoryTags = '';
+  }
+
   private async addNewMemory(): Promise<void> {
     try {
-      if (!this.newMemoryTitle.trim() || !this.newMemoryContent.trim()) {
+      if (!this.newMemoryContent.trim()) {
         AlertDialog.show({
           title: '提示',
-          message: '请填写记忆标题和内容',
+          message: '请填写记忆内容',
           confirm: {
             value: '确定',
             action: () => {}
@@ -194,7 +222,7 @@ struct MemoryManagerPage {
       const tags: string[] = this.newMemoryTags.split(',').map(tag => tag.trim()).filter(tag => tag);
 
       const newMemory: MemoryItemWithoutId = {
-        title: this.newMemoryTitle.trim(),
+        title: '', // 🔧 title将由MemoryManager自动生成
         content: this.newMemoryContent.trim(),
         category: this.newMemoryCategory,
         importance: this.newMemoryImportance,
@@ -248,10 +276,20 @@ struct MemoryManagerPage {
 
   private async deleteMemory(): Promise<void> {
     try {
-      await this.memoryManager.deleteMemoryItem(this.deleteTargetId);
+      // 🔧 增强日志：记录删除ID和现有记忆列表
+      Logger.info('MemoryManagerPage', `准备删除记忆，ID: ${this.deleteTargetId}，标题: ${this.deleteTargetTitle}`);
+      Logger.debug('MemoryManagerPage', `当前记忆列表长度: ${this.memoryItems.length}`);
+      if (this.memoryItems.length > 0) {
+        Logger.debug('MemoryManagerPage', `现有记忆ID列表: ${this.memoryItems.map(item => item.id).slice(0, 3).join(', ')}...`);
+      }
+
+      const result = await this.memoryManager.deleteMemoryItem(this.deleteTargetId);
+      Logger.info('MemoryManagerPage', `删除记忆操作完成，成功: ${result ? 'true' : 'false'}`);
 
       // 重新加载数据
+      Logger.info('MemoryManagerPage', `开始重新加载记忆数据`);
       await this.loadMemoryData();
+      Logger.info('MemoryManagerPage', `重新加载完成，当前记忆统计: 总计${this.memoryStats.totalFragments}个，激活${this.memoryStats.activeFragments}个`);
 
       // 关闭对话框
       this.showDeleteDialog = false;
@@ -266,10 +304,81 @@ struct MemoryManagerPage {
       });
 
     } catch (error) {
-      Logger.error('MemoryManagerPage', `删除记忆失败: ${error}`);
+      Logger.error('MemoryManagerPage', `删除记忆失败，ID: ${this.deleteTargetId}, 错误: ${error}`);
       AlertDialog.show({
         title: '删除失败',
         message: `删除记忆时发生错误: ${(error as Error).message}`,
+        confirm: {
+          value: '确定',
+          action: () => {}
+        }
+      });
+    }
+  }
+
+  private async editMemory(): Promise<void> {
+    try {
+      if (!this.editMemoryContent.trim()) {
+        AlertDialog.show({
+          title: '提示',
+          message: '请填写记忆内容',
+          confirm: {
+            value: '确定',
+            action: () => {}
+          }
+        });
+        return;
+      }
+
+      // 🔧 增强日志：记录编辑ID和现有记忆列表
+      Logger.info('MemoryManagerPage', `准备编辑记忆，ID: ${this.editMemoryId}`);
+      Logger.debug('MemoryManagerPage', `当前记忆列表长度: ${this.memoryItems.length}`);
+      if (this.memoryItems.length > 0) {
+        Logger.debug('MemoryManagerPage', `现有记忆ID列表: ${this.memoryItems.map(item => item.id).slice(0, 3).join(', ')}...`);
+      }
+
+      const tags: string[] = this.editMemoryTags.split(',').map(tag => tag.trim()).filter(tag => tag);
+
+      const updatedMemory: MemoryItemWithoutId = {
+        title: '', // 🔧 title将由MemoryManager自动生成
+        content: this.editMemoryContent.trim(),
+        category: this.editMemoryCategory,
+        importance: this.editMemoryImportance,
+        tags: tags,
+        createdAt: 0, // 保持原有创建时间
+        updatedAt: Date.now(),
+        isActive: true,
+        usageCount: 0, // 保持原有使用次数
+        lastUsedAt: 0 // 保持原有最后使用时间
+      };
+
+      Logger.info('MemoryManagerPage', `准备编辑记忆: ${updatedMemory.title}，ID: ${this.editMemoryId}`);
+      const result = await this.memoryManager.updateMemoryItem(this.editMemoryId, updatedMemory);
+      Logger.info('MemoryManagerPage', `编辑记忆操作完成，成功: ${result ? 'true' : 'false'}`);
+
+      // 重新加载数据
+      Logger.info('MemoryManagerPage', `开始重新加载记忆数据`);
+      await this.loadMemoryData();
+      Logger.info('MemoryManagerPage', `重新加载完成，当前记忆统计: 总计${this.memoryStats.totalFragments}个，激活${this.memoryStats.activeFragments}个`);
+
+      // 关闭对话框
+      this.showEditDialog = false;
+      this.resetEditMemoryForm();
+
+      AlertDialog.show({
+        title: '编辑成功',
+        message: '记忆碎片已成功更新',
+        confirm: {
+          value: '确定',
+          action: () => {}
+        }
+      });
+
+    } catch (error) {
+      Logger.error('MemoryManagerPage', `编辑记忆失败，ID: ${this.editMemoryId}, 错误: ${error}`);
+      AlertDialog.show({
+        title: '编辑失败',
+        message: `编辑记忆时发生错误: ${(error as Error).message}`,
         confirm: {
           value: '确定',
           action: () => {}
@@ -368,6 +477,11 @@ struct MemoryManagerPage {
       if (this.showDeleteDialog) {
         this.buildDeleteConfirmDialog()
       }
+
+      // 编辑记忆对话框
+      if (this.showEditDialog) {
+        this.buildEditMemoryDialog()
+      }
     }
     .width('100%')
     .height('100%')
@@ -448,15 +562,26 @@ struct MemoryManagerPage {
           } else {
             ForEach(this.getFilteredMemoryItems(), (item: MemoryItemWithId) => {
               MemoryItemComponent({
-                memoryItem: item
+                memoryItem: item,
+                onEdit: (editItem: MemoryItem) => {
+                  this.showEditMemoryDialog(editItem);
+                },
+                onDelete: (itemId: string) => {
+                  const item = this.memoryItems.find(i => i.id === itemId);
+                  if (item) {
+                    this.showDeleteConfirmDialog(itemId, item.title);
+                  }
+                }
               })
             })
           }
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 16, bottom: 32 })
+        .alignItems(HorizontalAlign.Start)
       }
       .layoutWeight(1)
+      .align(Alignment.TopStart)
     }
     .width('100%')
     .height('100%')
@@ -650,24 +775,28 @@ struct MemoryManagerPage {
 
         Scroll() {
           Column() {
-            // 标题输入
+            // 标题显示（只读）
             Column() {
-              Text('标题')
-                .fontSize(14)
-                .fontColor($r('app.color.text_primary'))
-                .alignSelf(ItemAlign.Start)
-                .margin({ bottom: 8 })
+              Row() {
+                Text('标题')
+                  .fontSize(14)
+                  .fontColor($r('app.color.text_primary'))
+                Text('(自动生成)')
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_secondary'))
+                  .margin({ left: 8 })
+              }
+              .alignSelf(ItemAlign.Start)
+              .margin({ bottom: 8 })
 
-              TextInput({ placeholder: '输入记忆标题...' })
+              TextInput({ placeholder: '标题将基于创建时间自动生成...' })
                 .width('100%')
                 .height(44)
                 .backgroundColor($r('app.color.input_background'))
                 .borderRadius(8)
                 .placeholderColor($r('app.color.text_secondary'))
-                .fontColor($r('app.color.text_primary'))
-                .onChange((value: string) => {
-                  this.newMemoryTitle = value;
-                })
+                .fontColor($r('app.color.text_secondary'))
+                .enabled(false) // 🔧 禁用标题编辑
             }
             .alignItems(HorizontalAlign.Start)
             .margin({ bottom: 16 })
@@ -888,6 +1017,217 @@ struct MemoryManagerPage {
       }
       .width('85%')
       .padding(24)
+      .backgroundColor($r('app.color.surface_color'))
+      .borderRadius(16)
+      .position({ x: '50%', y: '50%' })
+      .translate({ x: '-50%', y: '-50%' })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  buildEditMemoryDialog() {
+    Column() {
+      // 背景遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0, 0, 0, 0.5)')
+        .onClick(() => {
+          this.showEditDialog = false;
+          this.resetEditMemoryForm();
+        })
+
+      // 对话框内容
+      Column() {
+        Text('编辑记忆碎片')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .margin({ bottom: 20 })
+
+        Scroll() {
+          Column() {
+            // 标题显示（只读）
+            Column() {
+              Row() {
+                Text('标题')
+                  .fontSize(14)
+                  .fontColor($r('app.color.text_primary'))
+                Text('(自动生成)')
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_secondary'))
+                  .margin({ left: 8 })
+              }
+              .alignSelf(ItemAlign.Start)
+              .margin({ bottom: 8 })
+
+              TextInput({ text: this.editMemoryTitle, placeholder: '标题将自动生成...' })
+                .width('100%')
+                .height(44)
+                .backgroundColor($r('app.color.input_background'))
+                .borderRadius(8)
+                .placeholderColor($r('app.color.text_secondary'))
+                .fontColor($r('app.color.text_secondary'))
+                .enabled(false) // 🔧 禁用标题编辑
+            }
+            .alignItems(HorizontalAlign.Start)
+            .margin({ bottom: 16 })
+
+            // 内容输入
+            Column() {
+              Text('内容')
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .alignSelf(ItemAlign.Start)
+                .margin({ bottom: 8 })
+
+              TextArea({ text: this.editMemoryContent, placeholder: '输入记忆内容...' })
+                .width('100%')
+                .height(100)
+                .backgroundColor($r('app.color.input_background'))
+                .borderRadius(8)
+                .placeholderColor($r('app.color.text_secondary'))
+                .fontColor($r('app.color.text_primary'))
+                .onChange((value: string) => {
+                  this.editMemoryContent = value;
+                })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .margin({ bottom: 16 })
+
+            // 分类选择
+            Column() {
+              Text('分类')
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .alignSelf(ItemAlign.Start)
+                .margin({ bottom: 8 })
+
+              Select([
+                { value: '个人' },
+                { value: '偏好' },
+                { value: '工作' },
+                { value: '学习' },
+                { value: '爱好' },
+                { value: '家庭' },
+                { value: '健康' },
+                { value: '自定义' }
+              ])
+                .selected(this.getCategoryIndex(this.editMemoryCategory) - 1)
+                .value(this.getCategoryDisplayName(this.editMemoryCategory))
+                .font({ size: 14 })
+                .fontColor($r('app.color.text_primary'))
+                .selectedOptionFontColor(Color.White)
+                .selectedOptionBgColor($r('app.color.primary_color'))
+                .onSelect((index: number) => {
+                  const category = this.getCategoryByIndex(index + 1);
+                  if (category !== 'all') {
+                    this.editMemoryCategory = category;
+                  }
+                })
+                .width('100%')
+                .height(40)
+                .backgroundColor($r('app.color.input_background'))
+                .borderRadius(8)
+            }
+            .alignItems(HorizontalAlign.Start)
+            .margin({ bottom: 16 })
+
+            // 重要性选择
+            Column() {
+              Text('重要性')
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .alignSelf(ItemAlign.Start)
+                .margin({ bottom: 8 })
+
+              Select([
+                { value: '低' },
+                { value: '中' },
+                { value: '高' },
+                { value: '关键' }
+              ])
+                .selected(this.getImportanceIndex(this.editMemoryImportance) - 1)
+                .value(this.getImportanceDisplayName(this.editMemoryImportance))
+                .font({ size: 14 })
+                .fontColor($r('app.color.text_primary'))
+                .selectedOptionFontColor(Color.White)
+                .selectedOptionBgColor($r('app.color.primary_color'))
+                .onSelect((index: number) => {
+                  const importance = this.getImportanceByIndex(index + 1);
+                  if (importance !== 'all') {
+                    this.editMemoryImportance = importance;
+                  }
+                })
+                .width('100%')
+                .height(40)
+                .backgroundColor($r('app.color.input_background'))
+                .borderRadius(8)
+            }
+            .alignItems(HorizontalAlign.Start)
+            .margin({ bottom: 16 })
+
+            // 标签输入
+            Column() {
+              Text('标签')
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .alignSelf(ItemAlign.Start)
+                .margin({ bottom: 8 })
+
+              TextInput({ text: this.editMemoryTags, placeholder: '输入标签，用逗号分隔...' })
+                .width('100%')
+                .height(44)
+                .backgroundColor($r('app.color.input_background'))
+                .borderRadius(8)
+                .placeholderColor($r('app.color.text_secondary'))
+                .fontColor($r('app.color.text_primary'))
+                .onChange((value: string) => {
+                  this.editMemoryTags = value;
+                })
+            }
+            .alignItems(HorizontalAlign.Start)
+          }
+          .width('100%')
+        }
+        .height(400)
+
+        // 按钮行
+        Row() {
+          Button('取消')
+            .fontSize(16)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.text_secondary'))
+            .borderWidth(1)
+            .borderColor($r('app.color.text_secondary'))
+            .borderRadius(8)
+            .layoutWeight(1)
+            .height(44)
+            .onClick(() => {
+              this.showEditDialog = false;
+              this.resetEditMemoryForm();
+            })
+
+          Button('保存')
+            .fontSize(16)
+            .backgroundColor($r('app.color.primary_color'))
+            .fontColor(Color.White)
+            .borderRadius(8)
+            .layoutWeight(1)
+            .height(44)
+            .margin({ left: 12 })
+            .onClick(() => this.editMemory())
+        }
+        .width('100%')
+        .margin({ top: 20 })
+      }
+      .width('90%')
+      .height('80%')
+      .padding(20)
       .backgroundColor($r('app.color.surface_color'))
       .borderRadius(16)
       .position({ x: '50%', y: '50%' })
