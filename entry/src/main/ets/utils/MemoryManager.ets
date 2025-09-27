@@ -428,13 +428,14 @@ export class MemoryManager {
 
       // 1. Vector Search
       let vectorResults: VectorSearchResult[] = [];
+      let tempVectorResults: VectorSearchResult[] = [];
       if (semanticQuery?.trim()) {
         try {
           const queryVector = await vectorService.generateEmbedding(semanticQuery);
           if (queryVector) {
             Logger.info('MemoryManager', `生成查询向量成功，开始向量搜索，维度: ${queryVector.length}`);
             const memoriesWithVectors = memories.filter(m => m.vector && m.vector.length > 0);
-            const tempVectorResults: VectorSearchResult[] = memoriesWithVectors
+            tempVectorResults = memoriesWithVectors
               .map(memory => {
                 const vectorResult: VectorSearchResult = {
                   memory: memory,
@@ -452,6 +453,14 @@ export class MemoryManager {
             if (tempVectorResults.length > vectorResults.length) {
               const filteredResults = tempVectorResults.filter(result => result.similarity < config.minSimilarity);
               Logger.info('MemoryManager', `被过滤的结果: ${filteredResults.map(r => `${r.memory.content.substring(0, 20)}...(${r.similarity.toFixed(3)})`).join(', ')}`);
+            }
+
+            // 当严格阈值筛选结果为空时，使用相似度最高的若干条作为兜底结果
+            if (vectorResults.length === 0 && tempVectorResults.length > 0) {
+              const sortedFallback = [...tempVectorResults].sort((a, b) => b.similarity - a.similarity);
+              const fallbackCount = Math.min(config.maxResults, 3, sortedFallback.length);
+              vectorResults = sortedFallback.slice(0, fallbackCount);
+              Logger.info('MemoryManager', `所有候选均低于阈值，启用相似度兜底，返回前 ${fallbackCount} 条。`);
             }
           }
         } catch (error) {

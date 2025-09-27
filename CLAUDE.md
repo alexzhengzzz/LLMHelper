@@ -210,7 +210,7 @@ entry/src/main/ets/
 ## 🔮 开发环境配置
 
 ### 开发环境要求
-- **DevEco Studio**: /Applications/DevEco-Studio.app
+- **DevEco Studio**: DevEco Studio 应用程序
 - **HarmonyOS SDK**: 5.0.5(17)
 - **编译目标**: phone@default
 - **签名配置**: debug模式自动签名
