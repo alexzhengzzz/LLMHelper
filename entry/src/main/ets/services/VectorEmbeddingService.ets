@@ -20,7 +20,7 @@ export class VectorEmbeddingService {
       hybridSearch: true,
       vectorWeight: 0.8,    // 提高向量权重，强调语义搜索
       keywordWeight: 0.2,   // 降低关键词权重，减少关键词影响
-      minSimilarity: 0.3,   // 提高相似度阈值，确保语义相关性
+      minSimilarity: 0.45,  // 提高相似度阈值，确保语义相关性
       maxResults: 10
     };
     this.apiService = new ApiService();
@@ -81,8 +81,19 @@ export class VectorEmbeddingService {
       this.totalEmbeddings++;
       this.totalGenerationTime += generationTime;
 
-      Logger.debug('VectorEmbeddingService',
-        `生成向量完成，维度: ${vector.length}，耗时: ${generationTime}ms`);
+      // 输出详细的向量信息日志
+      Logger.info('VectorEmbeddingService',
+        `生成向量完成 - 文本: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
+      Logger.info('VectorEmbeddingService',
+        `向量详情 - 维度: ${vector.length}, 耗时: ${generationTime}ms`);
+      Logger.info('VectorEmbeddingService',
+        `向量前10个值: [${vector.slice(0, 10).map(v => v.toFixed(4)).join(', ')}]`);
+      Logger.info('VectorEmbeddingService',
+        `向量统计 - 最小值: ${Math.min(...vector).toFixed(4)}, 最大值: ${Math.max(...vector).toFixed(4)}`);
+      Logger.info('VectorEmbeddingService',
+        `向量统计 - 平均值: ${(vector.reduce((a, b) => a + b, 0) / vector.length).toFixed(4)}`);
+      Logger.info('VectorEmbeddingService',
+        `累计生成向量总数: ${this.totalEmbeddings}, 平均耗时: ${(this.totalGenerationTime / this.totalEmbeddings).toFixed(2)}ms`);
 
       return vector;
 
@@ -174,7 +185,7 @@ export class VectorEmbeddingService {
     return {
       modelLoaded: this.isInitialized,
       modelName: 'BGE-Small-ZH-v1.5',
-      embeddingDimension: 384, // BGE-small模型的维度
+      embeddingDimension: 512, // BGE-small-zh-v1.5模型的实际维度
       totalEmbeddings: this.totalEmbeddings,
       averageGenerationTime: this.totalEmbeddings > 0 ?
         this.totalGenerationTime / this.totalEmbeddings : 0

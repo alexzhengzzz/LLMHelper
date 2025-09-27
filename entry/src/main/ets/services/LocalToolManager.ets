@@ -15,9 +15,7 @@ import {
 import { Logger } from '../utils/Logger';
 import CalculatorTool from './CalculatorTool';
 import AppLauncherTool from './AppLauncherTool';
-import WeatherServiceTool from './WeatherServiceTool';
 import MemoryTool from './MemoryTool';
-import CalendarManagerTool from './CalendarManagerTool';
 import { AppStorage, MCPToolsConfig } from '../utils/AppStorage';
 
 /**
@@ -72,20 +70,6 @@ class AppLauncherToolExecutor implements LocalToolExecutor {
   }
 }
 
-/**
- * 天气服务工具执行器
- */
-class WeatherServiceToolExecutor implements LocalToolExecutor {
-  private weatherServiceTool: WeatherServiceTool;
-
-  constructor(weatherServiceTool: WeatherServiceTool) {
-    this.weatherServiceTool = weatherServiceTool;
-  }
-
-  async execute(request: ToolCallRequest): Promise<ToolCallResult> {
-    return this.weatherServiceTool.execute(request);
-  }
-}
 
 /**
  * 记忆搜索工具执行器
@@ -102,20 +86,6 @@ class MemoryToolExecutor implements LocalToolExecutor {
   }
 }
 
-/**
- * 日程管理工具执行器
- */
-class CalendarManagerToolExecutor implements LocalToolExecutor {
-  private calendarManagerTool: CalendarManagerTool;
-
-  constructor(calendarManagerTool: CalendarManagerTool) {
-    this.calendarManagerTool = calendarManagerTool;
-  }
-
-  async execute(request: ToolCallRequest): Promise<ToolCallResult> {
-    return this.calendarManagerTool.execute(request);
-  }
-}
 
 /**
  * 本地工具管理器
@@ -134,9 +104,7 @@ export class LocalToolManager {
     this.registerAppManagementTools();
     this.registerCalculatorTool();
     this.registerAppLauncherTool();
-    this.registerWeatherServiceTool();
     this.registerMemoryTool();
-    this.registerCalendarManagerTool();
 
     // 异步初始化工具配置
     this.initializeToolsConfig().then(() => {
@@ -223,19 +191,6 @@ export class LocalToolManager {
     Logger.info('LocalToolManager', `App launcher tool registered: ${toolDefinition.name}`);
   }
 
-  /**
-   * 注册天气服务工具
-   */
-  private registerWeatherServiceTool(): void {
-    const weatherServiceTool = WeatherServiceTool.getInstance(this.context);
-    const toolDefinition = weatherServiceTool.getToolDefinition();
-
-    this.registeredTools.set(toolDefinition.name, toolDefinition);
-    const executor: LocalToolExecutor = new WeatherServiceToolExecutor(weatherServiceTool);
-    this.toolExecutors.set(toolDefinition.name, executor);
-
-    Logger.info('LocalToolManager', `Weather service tool registered: ${toolDefinition.name}`);
-  }
 
   /**
    * 注册记忆搜索工具
@@ -251,19 +206,6 @@ export class LocalToolManager {
     Logger.info('LocalToolManager', `Memory tool registered: ${toolDefinition.name}`);
   }
 
-  /**
-   * 注册日程管理工具
-   */
-  private registerCalendarManagerTool(): void {
-    const calendarManagerTool = CalendarManagerTool.getInstance(this.context);
-    const toolDefinition = calendarManagerTool.getToolDefinition();
-
-    this.registeredTools.set(toolDefinition.name, toolDefinition);
-    const executor: LocalToolExecutor = new CalendarManagerToolExecutor(calendarManagerTool);
-    this.toolExecutors.set(toolDefinition.name, executor);
-
-    Logger.info('LocalToolManager', `Calendar manager tool registered: ${toolDefinition.name}`);
-  }
 
   /**
    * 获取所有可用工具（只返回已启用的工具）
@@ -441,13 +383,7 @@ export class LocalToolManager {
     if (toolName === 'calculator') {
       return 'utility';
     }
-    if (toolName === 'weather_service' || toolName.startsWith('weather_')) {
-      return 'utility';
-    }
     if (toolName === 'search_user_memories' || toolName.startsWith('memory_')) { // 修改工具名称
-      return 'utility';
-    }
-    if (toolName === 'calendar_manager' || toolName.startsWith('calendar_')) {
       return 'utility';
     }
     return 'custom';
@@ -740,7 +676,7 @@ export class LocalToolManager {
         description: tool.description,
         usageCount: usageCount,
         configurable: true,
-        systemTool: ['calculator', 'app_launcher', 'weather_service', 'search_user_memories', 'calendar_manager'].includes(toolName)
+        systemTool: ['calculator', 'app_launcher', 'search_user_memories'].includes(toolName)
       };
     } catch (error) {
       Logger.error('LocalToolManager', `Failed to get tool config: ${error}`);

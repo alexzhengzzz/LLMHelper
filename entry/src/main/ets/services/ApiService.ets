@@ -234,7 +234,7 @@ export class ApiService implements IApiService {
    * 高性能的向量计算服务。
    *
    * @param {string} text 需要生成向量的文本内容
-   * @returns {Promise<number[]>} 文本的向量嵌入表示（384维）
+   * @returns {Promise<number[]>} 文本的向量嵌入表示（512维）
    * @throws {Error} 当网络请求失败或服务器返回错误状态码时抛出异常
    *
    * @example

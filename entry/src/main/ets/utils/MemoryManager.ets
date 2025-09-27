@@ -122,20 +122,26 @@ export class MemoryManager {
       const now = Date.now();
 
       // 生成向量嵌入
+      const memoryId: string = this.generateId();
       let vector: number[] | undefined = undefined;
       try {
+        Logger.info('MemoryManager', `开始为记忆生成向量 - 内容: "${request.content.trim().substring(0, 100)}${request.content.trim().length > 100 ? '...' : ''}"`);
         const embeddingResult = await VectorEmbeddingService.getInstance().generateEmbedding(request.content.trim());
         if (embeddingResult !== null) {
           vector = embeddingResult;
-          Logger.info('MemoryManager', `成功生成记忆向量，维度: ${vector.length}`);
+          Logger.info('MemoryManager', `记忆向量生成成功 - ID: ${memoryId}, 维度: ${vector.length}`);
+          Logger.info('MemoryManager', `向量前10个值: [${vector.slice(0, 10).map(v => v.toFixed(4)).join(', ')}]`);
+        } else {
+          Logger.warn('MemoryManager', `向量生成返回null，将保存为无向量记忆`);
         }
       } catch (error) {
-        Logger.warn('MemoryManager', `生成向量失败，将保存为无向量记忆: ${error}`);
+        Logger.error('MemoryManager', `生成向量失败，将保存为无向量记忆: ${error}`);
+        Logger.info('MemoryManager', `记忆将保存为纯文本模式，无向量信息`);
         // 向量生成失败时继续保存，只是没有向量
       }
 
       const memory: MemoryFragment = {
-        id: this.generateId(),
+        id: memoryId,
         content: request.content.trim(),
         tags: request.tags || [],
         category: request.category || MemoryCategory.CUSTOM,
@@ -203,13 +209,19 @@ export class MemoryManager {
 
         // 内容更新时重新生成向量
         try {
+          Logger.info('MemoryManager', `内容更新，重新生成向量 - ID: ${id}`);
+          Logger.info('MemoryManager', `新内容: "${memory.content.substring(0, 100)}${memory.content.length > 100 ? '...' : ''}"`);
           const vector = await VectorEmbeddingService.getInstance().generateEmbedding(memory.content);
           if (vector) {
             memory.vector = vector;
-            Logger.info('MemoryManager', `内容更新后重新生成向量，维度: ${vector.length}`);
+            Logger.info('MemoryManager', `记忆更新后向量重新生成成功 - ID: ${id}, 维度: ${vector.length}`);
+            Logger.info('MemoryManager', `新向量前10个值: [${vector.slice(0, 10).map(v => v.toFixed(4)).join(', ')}]`);
+          } else {
+            Logger.warn('MemoryManager', `更新后向量生成返回null，保留原向量`);
           }
         } catch (error) {
-          Logger.warn('MemoryManager', `重新生成向量失败，保留原向量或设为无向量: ${error}`);
+          Logger.error('MemoryManager', `重新生成向量失败，保留原向量或设为无向量: ${error}`);
+          Logger.info('MemoryManager', `保留原向量状态或设为无向量`);
           // 向量生成失败时保留原vector或设为undefined
         }
       }
@@ -381,7 +393,16 @@ export class MemoryManager {
                 return vectorResult;
               });
             vectorResults = tempVectorResults.filter(result => result.similarity >= config.minSimilarity);
-            Logger.info('MemoryManager', `向量搜索找到 ${vectorResults.length} 个候选结果`);
+
+            // 输出详细的相似度调试信息
+            Logger.info('MemoryManager', `向量搜索阈值: ${config.minSimilarity}, 原始候选: ${tempVectorResults.length} 个, 过滤后: ${vectorResults.length} 个`);
+            if (vectorResults.length > 0) {
+              Logger.info('MemoryManager', `候选结果相似度分数: ${vectorResults.map(r => `${r.memory.content.substring(0, 20)}...(${r.similarity.toFixed(3)})`).join(', ')}`);
+            }
+            if (tempVectorResults.length > vectorResults.length) {
+              const filteredResults = tempVectorResults.filter(result => result.similarity < config.minSimilarity);
+              Logger.info('MemoryManager', `被过滤的结果: ${filteredResults.map(r => `${r.memory.content.substring(0, 20)}...(${r.similarity.toFixed(3)})`).join(', ')}`);
+            }
           }
         } catch (error) {
           Logger.warn('MemoryManager', `向量搜索失败: ${error}`);
@@ -1052,6 +1073,88 @@ ${memoryLines.join('\n')}
         migrationNeeded: false
       };
       return errorStatus;
+    }
+  }
+
+  /**
+   * 记录所有记忆的向量信息到日志
+   */
+  async logAllMemoryVectors(): Promise<void> {
+    try {
+      const memories = await this.getAllMemories();
+      Logger.info('MemoryManager', `========== 开始记录所有记忆向量信息 ==========`);
+      Logger.info('MemoryManager', `总记忆数量: ${memories.length}`);
+
+      const memoriesWithVectors = memories.filter(memory => memory.vector && memory.vector.length > 0);
+      const memoriesWithoutVectors = memories.filter(memory => !memory.vector || memory.vector.length === 0);
+
+      Logger.info('MemoryManager', `有向量的记忆: ${memoriesWithVectors.length}`);
+      Logger.info('MemoryManager', `无向量的记忆: ${memoriesWithoutVectors.length}`);
+
+      // 记录有向量的记忆详情
+      memoriesWithVectors.forEach((memory, index) => {
+        Logger.info('MemoryManager', `--- 记忆 ${index + 1} ---`);
+        Logger.info('MemoryManager', `ID: ${memory.id}`);
+        Logger.info('MemoryManager', `内容: "${memory.content.substring(0, 50)}${memory.content.length > 50 ? '...' : ''}"`);
+        Logger.info('MemoryManager', `向量维度: ${memory.vector!.length}`);
+        Logger.info('MemoryManager', `向量前10个值: [${memory.vector!.slice(0, 10).map(v => v.toFixed(4)).join(', ')}]`);
+        Logger.info('MemoryManager', `向量统计 - 最小值: ${Math.min(...memory.vector!).toFixed(4)}, 最大值: ${Math.max(...memory.vector!).toFixed(4)}`);
+        Logger.info('MemoryManager', `向量统计 - 平均值: ${(memory.vector!.reduce((a, b) => a + b, 0) / memory.vector!.length).toFixed(4)}`);
+        Logger.info('MemoryManager', `创建时间: ${new Date(memory.createdAt).toLocaleString()}`);
+        Logger.info('MemoryManager', `更新时间: ${new Date(memory.updatedAt).toLocaleString()}`);
+        Logger.info('MemoryManager', `使用次数: ${memory.usageCount}`);
+        Logger.info('MemoryManager', `分类: ${memory.category}, 重要性: ${memory.importance}`);
+      });
+
+      // 记录无向量的记忆
+      if (memoriesWithoutVectors.length > 0) {
+        Logger.info('MemoryManager', `--- 无向量记忆列表 ---`);
+        memoriesWithoutVectors.forEach((memory, index) => {
+          Logger.info('MemoryManager', `${index + 1}. ID: ${memory.id}, 内容: "${memory.content.substring(0, 30)}${memory.content.length > 30 ? '...' : ''}"`);
+        });
+      }
+
+      Logger.info('MemoryManager', `========== 记忆向量信息记录完成 ==========`);
+    } catch (error) {
+      Logger.error('MemoryManager', `记录记忆向量信息失败: ${error}`);
+    }
+  }
+
+  /**
+   * 获取指定记忆的向量信息
+   */
+  async logMemoryVector(id: string): Promise<void> {
+    try {
+      const memory = await this.getMemory(id);
+      if (!memory) {
+        Logger.warn('MemoryManager', `未找到ID为 ${id} 的记忆`);
+        return;
+      }
+
+      Logger.info('MemoryManager', `========== 记忆向量信息 ==========`);
+      Logger.info('MemoryManager', `ID: ${memory.id}`);
+      Logger.info('MemoryManager', `内容: "${memory.content}"`);
+
+      if (memory.vector && memory.vector.length > 0) {
+        Logger.info('MemoryManager', `向量状态: 有向量`);
+        Logger.info('MemoryManager', `向量维度: ${memory.vector.length}`);
+        Logger.info('MemoryManager', `完整向量: [${memory.vector.map(v => v.toFixed(4)).join(', ')}]`);
+        Logger.info('MemoryManager', `向量前10个值: [${memory.vector.slice(0, 10).map(v => v.toFixed(4)).join(', ')}]`);
+        Logger.info('MemoryManager', `向量后10个值: [${memory.vector.slice(-10).map(v => v.toFixed(4)).join(', ')}]`);
+        Logger.info('MemoryManager', `向量统计 - 最小值: ${Math.min(...memory.vector).toFixed(4)}, 最大值: ${Math.max(...memory.vector).toFixed(4)}`);
+        Logger.info('MemoryManager', `向量统计 - 平均值: ${(memory.vector.reduce((a, b) => a + b, 0) / memory.vector.length).toFixed(4)}`);
+        Logger.info('MemoryManager', `向量统计 - 标准差: ${Math.sqrt(memory.vector.reduce((a, b) => a + b * b, 0) / memory.vector.length - Math.pow(memory.vector.reduce((a, b) => a + b, 0) / memory.vector.length, 2)).toFixed(4)}`);
+      } else {
+        Logger.info('MemoryManager', `向量状态: 无向量`);
+      }
+
+      Logger.info('MemoryManager', `创建时间: ${new Date(memory.createdAt).toLocaleString()}`);
+      Logger.info('MemoryManager', `更新时间: ${new Date(memory.updatedAt).toLocaleString()}`);
+      Logger.info('MemoryManager', `使用次数: ${memory.usageCount}`);
+      Logger.info('MemoryManager', `分类: ${memory.category}, 重要性: ${memory.importance}`);
+      Logger.info('MemoryManager', `===============================`);
+    } catch (error) {
+      Logger.error('MemoryManager', `获取记忆向量信息失败: ${error}`);
     }
   }
 

@@ -106,7 +106,6 @@ entry/src/main/ets/
 │   ├── LocalToolManager.ets         # 本地工具管理器
 │   ├── CalculatorTool.ets            # 计算器工具
 │   ├── AppLauncherTool.ets          # 应用启动工具
-│   ├── WeatherServiceTool.ets       # 天气服务工具
 │   ├── AudioCapturer.ets             # 音频捕获
 │   └── ContentCompressor.ets        # 内容压缩器
 ├── clients/                 # API客户端
