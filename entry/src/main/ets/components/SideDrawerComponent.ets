@@ -253,6 +253,21 @@ export struct SideDrawerComponent {
   private get menuSections(): MenuSection[] {
     return [
       {
+        title: '功能',
+        items: [
+          {
+            id: 'memory',
+            title: '记忆中心',
+            subtitle: '管理AI记忆和知识',
+            icon: '🧠',
+            iconColor: '#E74C3C',
+            action: () => {
+              this.navigateToMemoryManager();
+            }
+          }
+        ]
+      },
+      {
         title: '设置',
         items: [
           {
@@ -1195,6 +1210,13 @@ export struct SideDrawerComponent {
     this.closeDrawer();
     setTimeout(() => {
       router.pushUrl({ url: 'pages/SettingsPage' });
+    }, 300);
+  }
+
+  private navigateToMemoryManager(): void {
+    this.closeDrawer();
+    setTimeout(() => {
+      router.pushUrl({ url: 'pages/MemoryManagerPage' });
     }, 300);
   }
 

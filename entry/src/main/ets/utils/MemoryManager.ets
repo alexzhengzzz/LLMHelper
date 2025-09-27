@@ -17,7 +17,16 @@ import {
   MemorySearchResult,
   HybridSearchResult,
   VectorSearchResult,
-  VectorMigrationStatus
+  VectorMigrationStatus,
+  // 用户主动触发记忆功能相关类型
+  MemoryTriggerSource,
+  MemoryContentType,
+  UserMemoryItem,
+  MemoryCommandParseResult,
+  MemoryCommand,
+  SaveUserMemoryRequest,
+  MemoryOperationFeedback,
+  UserMemoryManagerConfig
 } from '../types/MemoryTypes';
 import { AppStorage } from './AppStorage';
 import { Logger } from './Logger';
@@ -51,8 +60,49 @@ export class MemoryManager {
   private readonly MEMORY_CONFIG_KEY = 'memory_injection_config';
   private readonly MEMORY_STATS_KEY = 'memory_stats_cache';
   private memoryStatsListeners: Array<(stats: MemoryStats) => void> = [];
+  private userMemoryConfig: UserMemoryManagerConfig;
+  private readonly supportedCommands: MemoryCommand[];
 
   private constructor() {
+    // 初始化用户记忆配置
+    this.userMemoryConfig = {
+      autoGenerateTitle: true,
+      maxTitleLength: 50,
+      defaultCategory: MemoryCategory.CUSTOM,
+      defaultImportance: MemoryImportance.MEDIUM,
+      enableTagSuggestion: true,
+      maxRecentMemories: 20,
+      enableExportImport: true
+    };
+
+    // 初始化支持的记忆指令
+    this.supportedCommands = [
+      {
+        trigger: '记住',
+        pattern: /^记住[:：]\s*(.+)$/i,
+        description: '记住指定内容',
+        example: '记住：我喜欢喝拿铁咖啡'
+      },
+      {
+        trigger: '记下',
+        pattern: /^记下[:：]\s*(.+)$/i,
+        description: '记下指定内容',
+        example: '记下：我的生日是3月15日'
+      },
+      {
+        trigger: '保存',
+        pattern: /^保存[:：]\s*(.+)$/i,
+        description: '保存指定内容到记忆',
+        example: '保存：我在字节跳动工作'
+      },
+      {
+        trigger: '记录',
+        pattern: /^记录[:：]\s*(.+)$/i,
+        description: '记录指定内容',
+        example: '记录：我喜欢周末去爬山'
+      }
+    ];
+
     // 初始化向量化服务
     this.initializeVectorService();
   }
@@ -1156,6 +1206,330 @@ ${memoryLines.join('\n')}
     } catch (error) {
       Logger.error('MemoryManager', `获取记忆向量信息失败: ${error}`);
     }
+  }
+
+  // ====== 用户主动触发记忆功能 ======
+
+  /**
+   * 解析用户输入中的记忆指令
+   */
+  parseMemoryCommand(input: string): MemoryCommandParseResult {
+    const trimmedInput = input.trim();
+
+    for (const command of this.supportedCommands) {
+      const match = trimmedInput.match(command.pattern);
+      if (match && match[1]) {
+        const content = match[1].trim();
+        const title = this.userMemoryConfig.autoGenerateTitle
+          ? this.generateTitle(content)
+          : undefined;
+
+        return {
+          isMemoryCommand: true,
+          command: command.trigger,
+          content: content,
+          title: title,
+          tags: this.userMemoryConfig.enableTagSuggestion ? this.suggestTags(content) : [],
+          category: this.inferCategory(content)
+        };
+      }
+    }
+
+    return {
+      isMemoryCommand: false,
+      command: '',
+      content: '',
+      title: undefined,
+      tags: [],
+      category: undefined
+    };
+  }
+
+  /**
+   * 保存用户主动触发的记忆
+   */
+  async saveUserMemory(request: SaveUserMemoryRequest): Promise<MemoryOperationFeedback> {
+    try {
+      Logger.info('MemoryManager', `保存用户记忆: 来源=${request.triggerSource}, 内容="${request.content.substring(0, 50)}..."`);
+
+      // 生成标题
+      const title = request.title || (this.userMemoryConfig.autoGenerateTitle
+        ? this.generateTitle(request.content)
+        : `记忆-${Date.now()}`);
+
+      // 推断内容类型
+      const contentType = request.contentType || this.inferContentType(request.content);
+
+      // 创建记忆请求
+      const createRequest: CreateMemoryRequest = {
+        content: request.content,
+        tags: request.tags || (this.userMemoryConfig.enableTagSuggestion ? this.suggestTags(request.content) : []),
+        category: request.category || this.userMemoryConfig.defaultCategory,
+        importance: request.importance || this.userMemoryConfig.defaultImportance,
+        isActive: true
+      };
+
+      // 保存记忆
+      const result = await this.createMemory(createRequest);
+
+      if (result.success && result.data) {
+        const memory = Array.isArray(result.data) ? result.data[0] : result.data;
+        Logger.info('MemoryManager', `用户记忆保存成功: ID=${memory.id}, 标题="${title}"`);
+
+        return {
+          success: true,
+          message: `已记住：${title}`,
+          memoryId: memory.id,
+          title: title,
+          action: 'save'
+        };
+      } else {
+        Logger.error('MemoryManager', `用户记忆保存失败: ${result.message}`);
+        return {
+          success: false,
+          message: `记忆保存失败：${result.message}`,
+          action: 'save'
+        };
+      }
+
+    } catch (error) {
+      Logger.error('MemoryManager', `保存用户记忆异常: ${error}`);
+      return {
+        success: false,
+        message: `记忆保存异常：${error}`,
+        action: 'save'
+      };
+    }
+  }
+
+  /**
+   * 从消息内容保存用户记忆
+   */
+  async saveMemoryFromMessage(messageId: string, content: string, sessionId?: string): Promise<MemoryOperationFeedback> {
+    const request: SaveUserMemoryRequest = {
+      content: content,
+      triggerSource: MemoryTriggerSource.USER_CLICK,
+      contentType: MemoryContentType.MESSAGE,
+      sessionId: sessionId,
+      messageId: messageId,
+      originalContext: content
+    };
+
+    return await this.saveUserMemory(request);
+  }
+
+  /**
+   * 生成记忆标题
+   */
+  private generateTitle(content: string): string {
+    const maxLength = this.userMemoryConfig.maxTitleLength;
+
+    // 如果内容较短，直接使用内容作为标题
+    if (content.length <= maxLength) {
+      return content;
+    }
+
+    // 尝试找到合适的截断点
+    const sentences = content.split(/[。！？.!?]/);
+    if (sentences.length > 1 && sentences[0].length <= maxLength) {
+      return sentences[0];
+    }
+
+    // 按词截断
+    const words = content.split(/\s+/);
+    let title = '';
+    for (const word of words) {
+      if (title.length + word.length + 1 <= maxLength) {
+        title += (title ? ' ' : '') + word;
+      } else {
+        break;
+      }
+    }
+
+    // 如果还是太长，直接截断
+    if (!title || title.length === 0) {
+      title = content.substring(0, maxLength - 3) + '...';
+    }
+
+    return title;
+  }
+
+  /**
+   * 推断内容类型
+   */
+  private inferContentType(content: string): MemoryContentType {
+    // 检测代码特征
+    const codePatterns = [
+      /```[\s\S]*?```/,  // 代码块
+      /`[^`]+`/,         // 行内代码
+      /function\s+\w+/,  // JavaScript函数
+      /def\s+\w+/,       // Python函数
+      /class\s+\w+/,     // 类定义
+      /import\s+/,       // 导入语句
+      /console\.log/,    // 控制台输出
+      /print\s*\(/       // 打印函数
+    ];
+
+    for (const pattern of codePatterns) {
+      if (pattern.test(content)) {
+        return MemoryContentType.CODE;
+      }
+    }
+
+    // 如果包含问答格式，可能是对话
+    if (content.includes('问：') || content.includes('答：') ||
+        content.includes('Q:') || content.includes('A:')) {
+      return MemoryContentType.CONVERSATION;
+    }
+
+    // 默认为文本
+    return MemoryContentType.TEXT;
+  }
+
+  /**
+   * 推断记忆分类
+   */
+  private inferCategory(content: string): MemoryCategory {
+    const lowerContent = content.toLowerCase();
+
+    // 个人信息关键词
+    const personalKeywords = ['我叫', '我是', '我的名字', '我的生日', '我住在', '我来自'];
+    if (personalKeywords.some(keyword => lowerContent.includes(keyword))) {
+      return MemoryCategory.PERSONAL;
+    }
+
+    // 偏好关键词
+    const preferenceKeywords = ['我喜欢', '我不喜欢', '我爱', '我讨厌', '我偏好', '我习惯'];
+    if (preferenceKeywords.some(keyword => lowerContent.includes(keyword))) {
+      return MemoryCategory.PREFERENCE;
+    }
+
+    // 工作关键词
+    const workKeywords = ['工作', '公司', '职位', '同事', '项目', '会议', '职业'];
+    if (workKeywords.some(keyword => lowerContent.includes(keyword))) {
+      return MemoryCategory.WORK;
+    }
+
+    // 学习关键词
+    const studyKeywords = ['学习', '课程', '考试', '学校', '教程', '培训'];
+    if (studyKeywords.some(keyword => lowerContent.includes(keyword))) {
+      return MemoryCategory.STUDY;
+    }
+
+    // 家庭关键词
+    const familyKeywords = ['家人', '父母', '妻子', '丈夫', '孩子', '家庭'];
+    if (familyKeywords.some(keyword => lowerContent.includes(keyword))) {
+      return MemoryCategory.FAMILY;
+    }
+
+    // 健康关键词
+    const healthKeywords = ['健康', '医生', '药物', '运动', '锻炼', '饮食'];
+    if (healthKeywords.some(keyword => lowerContent.includes(keyword))) {
+      return MemoryCategory.HEALTH;
+    }
+
+    // 爱好关键词
+    const hobbyKeywords = ['爱好', '兴趣', '娱乐', '游戏', '电影', '音乐', '阅读'];
+    if (hobbyKeywords.some(keyword => lowerContent.includes(keyword))) {
+      return MemoryCategory.HOBBY;
+    }
+
+    // 默认为自定义
+    return MemoryCategory.CUSTOM;
+  }
+
+  /**
+   * 建议标签
+   */
+  private suggestTags(content: string): string[] {
+    const tags: string[] = [];
+    const lowerContent = content.toLowerCase();
+
+    // 基于关键词的标签建议
+    const tagMap: Record<string, string[]> = {
+      '工作': ['工作', '职业'],
+      '学习': ['学习', '教育'],
+      '家庭': ['家庭', '亲情'],
+      '健康': ['健康', '医疗'],
+      '爱好': ['爱好', '兴趣'],
+      '旅行': ['旅行', '出行'],
+      '美食': ['美食', '饮食'],
+      '运动': ['运动', '健身'],
+      '音乐': ['音乐', '娱乐'],
+      '电影': ['电影', '娱乐'],
+      '阅读': ['阅读', '学习'],
+      '编程': ['编程', '技术'],
+      '技术': ['技术', '工作']
+    };
+
+    Object.entries(tagMap).forEach((entry: [string, string[]]) => {
+      const keyword = entry[0];
+      const suggestedTags = entry[1];
+      if (lowerContent.includes(keyword)) {
+        suggestedTags.forEach(tag => {
+          if (!tags.includes(tag)) {
+            tags.push(tag);
+          }
+        });
+      }
+    });
+
+    // 限制标签数量
+    return tags.slice(0, 5);
+  }
+
+  /**
+   * 获取支持的记忆指令列表
+   */
+  getSupportedCommands(): MemoryCommand[] {
+    const result: MemoryCommand[] = [];
+    for (let i = 0; i < this.supportedCommands.length; i++) {
+      result.push(this.supportedCommands[i]);
+    }
+    return result;
+  }
+
+  /**
+   * 获取用户记忆配置
+   */
+  getUserMemoryConfig(): UserMemoryManagerConfig {
+    return {
+      autoGenerateTitle: this.userMemoryConfig.autoGenerateTitle,
+      maxTitleLength: this.userMemoryConfig.maxTitleLength,
+      defaultCategory: this.userMemoryConfig.defaultCategory,
+      defaultImportance: this.userMemoryConfig.defaultImportance,
+      enableTagSuggestion: this.userMemoryConfig.enableTagSuggestion,
+      maxRecentMemories: this.userMemoryConfig.maxRecentMemories,
+      enableExportImport: this.userMemoryConfig.enableExportImport
+    };
+  }
+
+  /**
+   * 更新用户记忆配置
+   */
+  updateUserMemoryConfig(config: Partial<UserMemoryManagerConfig>): void {
+    if (config.autoGenerateTitle !== undefined) {
+      this.userMemoryConfig.autoGenerateTitle = config.autoGenerateTitle;
+    }
+    if (config.maxTitleLength !== undefined) {
+      this.userMemoryConfig.maxTitleLength = config.maxTitleLength;
+    }
+    if (config.defaultCategory !== undefined) {
+      this.userMemoryConfig.defaultCategory = config.defaultCategory;
+    }
+    if (config.defaultImportance !== undefined) {
+      this.userMemoryConfig.defaultImportance = config.defaultImportance;
+    }
+    if (config.enableTagSuggestion !== undefined) {
+      this.userMemoryConfig.enableTagSuggestion = config.enableTagSuggestion;
+    }
+    if (config.maxRecentMemories !== undefined) {
+      this.userMemoryConfig.maxRecentMemories = config.maxRecentMemories;
+    }
+    if (config.enableExportImport !== undefined) {
+      this.userMemoryConfig.enableExportImport = config.enableExportImport;
+    }
+    Logger.info('MemoryManager', '用户记忆配置已更新');
   }
 
 }

@@ -20,7 +20,7 @@ export class VectorEmbeddingService {
       hybridSearch: true,
       vectorWeight: 0.8,    // 提高向量权重，强调语义搜索
       keywordWeight: 0.2,   // 降低关键词权重，减少关键词影响
-      minSimilarity: 0.45,  // 提高相似度阈值，确保语义相关性
+      minSimilarity: 0.4,  // 提高相似度阈值，确保语义相关性
       maxResults: 10
     };
     this.apiService = new ApiService();

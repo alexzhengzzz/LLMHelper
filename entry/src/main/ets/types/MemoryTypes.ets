@@ -367,3 +367,91 @@ export interface VectorMigrationStatus {
   memoriesWithoutVectors: number;
   migrationNeeded: boolean;
 }
+
+// ====== 用户主动触发记忆功能扩展 ======
+
+// 记忆触发源类型
+export enum MemoryTriggerSource {
+  USER_COMMAND = 'user_command',    // 用户通过指令触发（如"记住："）
+  USER_CLICK = 'user_click',        // 用户点击按钮触发
+  SYSTEM_AUTO = 'system_auto'       // 系统自动保存（预留）
+}
+
+// 记忆内容类型
+export enum MemoryContentType {
+  TEXT = 'text',                    // 纯文本记忆
+  CODE = 'code',                    // 代码片段
+  CONVERSATION = 'conversation',    // 完整对话
+  MESSAGE = 'message'               // 单条消息
+}
+
+// 用户记忆项（扩展了基础MemoryFragment）
+export interface UserMemoryItem extends MemoryFragment {
+  title: string;                    // 记忆标题（自动生成或用户指定）
+  contentType: MemoryContentType;   // 内容类型
+  triggerSource: MemoryTriggerSource; // 触发来源
+  sessionId?: string;               // 所属会话ID
+  messageId?: string;               // 相关消息ID
+  originalContext?: string;         // 原始上下文
+}
+
+// 记忆指令解析结果
+export interface MemoryCommandParseResult {
+  isMemoryCommand: boolean;         // 是否为记忆指令
+  command: string;                  // 识别的指令类型
+  content: string;                  // 提取的内容
+  title?: string;                   // 自定义标题（如果有）
+  tags?: string[];                  // 提取的标签（如果有）
+  category?: MemoryCategory;        // 推断的分类
+}
+
+// 支持的记忆指令
+export interface MemoryCommand {
+  trigger: string;                  // 触发词（如"记住"、"记下"）
+  pattern: RegExp;                  // 匹配正则表达式
+  description: string;              // 指令描述
+  example: string;                  // 使用示例
+}
+
+// 记忆保存请求（用户触发）
+export interface SaveUserMemoryRequest {
+  content: string;                  // 必填：记忆内容
+  title?: string;                   // 可选：自定义标题
+  contentType?: MemoryContentType;  // 可选：内容类型，默认为TEXT
+  triggerSource: MemoryTriggerSource; // 必填：触发来源
+  sessionId?: string;               // 可选：会话ID
+  messageId?: string;               // 可选：消息ID
+  tags?: string[];                  // 可选：标签
+  category?: MemoryCategory;        // 可选：分类
+  importance?: MemoryImportance;    // 可选：重要程度
+  originalContext?: string;         // 可选：原始上下文
+}
+
+// 记忆操作反馈
+export interface MemoryOperationFeedback {
+  success: boolean;                 // 操作是否成功
+  message: string;                  // 反馈消息
+  memoryId?: string;                // 创建的记忆ID
+  title?: string;                   // 记忆标题
+  action: 'save' | 'update' | 'delete'; // 操作类型
+}
+
+// 记忆快速操作
+export interface MemoryQuickAction {
+  id: string;                       // 操作ID
+  title: string;                    // 操作标题
+  icon: string;                     // 操作图标
+  description: string;              // 操作描述
+  handler: (memoryId: string) => Promise<void>; // 操作处理器
+}
+
+// 记忆管理器配置
+export interface UserMemoryManagerConfig {
+  autoGenerateTitle: boolean;       // 是否自动生成标题
+  maxTitleLength: number;           // 标题最大长度
+  defaultCategory: MemoryCategory;  // 默认分类
+  defaultImportance: MemoryImportance; // 默认重要程度
+  enableTagSuggestion: boolean;     // 是否启用标签建议
+  maxRecentMemories: number;        // 最近记忆显示数量
+  enableExportImport: boolean;      // 是否启用导入导出
+}

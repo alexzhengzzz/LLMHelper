@@ -28,6 +28,8 @@ import { Logger } from '../utils/Logger';
 import { SessionManager } from '../utils/SessionManager';
 import { Constants } from '../utils/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { MemoryManager } from '../utils/MemoryManager';
+import { MemoryTriggerSource, MemoryCommandParseResult, SaveUserMemoryRequest } from '../types/MemoryTypes';
 
 // 导入基础动画系统
 import { 
@@ -141,6 +143,7 @@ struct ChatPage {
   private fontManager: FontManager = FontManager.getInstance();
   private userProfileManager: UserProfileManager = UserProfileManager.getInstance();
   private autoTTSService: AutoTTSService = AutoTTSService.getInstance();
+  private memoryManager: MemoryManager = MemoryManager.getInstance();
   private listScroller: ListScroller = new ListScroller();
   private lastProvidersReloadTime: number = 0; // 防抖：记录上次providers加载时间
   private forceReloadProviders: boolean = false; // 强制刷新模型列表标记
@@ -1127,6 +1130,27 @@ struct ChatPage {
                   this.toggleMessageAudio(message);
                 })
               }
+
+              // 记忆按钮 - 只有非空内容且不在加载中才显示
+              if (!message.isLoading && message.content.trim()) {
+                Button() {
+                  Text('💾')
+                    .fontSize(14)
+                    .fontColor($r('app.color.text_primary'))
+                }
+                .width(32)
+                .height(32)
+                .backgroundColor($r('app.color.surface_color'))
+                .borderRadius(16)
+                .border({
+                  width: 1,
+                  color: $r('app.color.border_color')
+                })
+                .margin({ left: 8 })
+                .onClick(() => {
+                  this.saveMessageAsMemory(message);
+                })
+              }
             }
             .width('100%')
             .margin({ bottom: 4 })
@@ -1192,7 +1216,7 @@ struct ChatPage {
                       // 点击搜索标识显示详细信息气泡
                       Logger.info('ChatPage', `搜索标识被点击，searchDetails存在: ${!!message.searchDetails}, 长度: ${message.searchDetails?.length || 0}`);
                       Logger.info('ChatPage', `点击位置: (${event.displayX}, ${event.displayY})`);
-                      
+
                       if (message.searchDetails) {
                         Logger.info('ChatPage', '准备显示搜索详情气泡');
                         this.showSearchInfoBubble(message.searchDetails);
@@ -1290,6 +1314,27 @@ struct ChatPage {
               .margin({ left: 8 })
               .onClick(() => {
                 this.toggleMessageAudio(message);
+              })
+            }
+
+            // 记忆按钮 - 只有非空内容且不在加载中才显示
+            if (!message.isLoading && message.content.trim()) {
+              Button() {
+                Text('💾')
+                  .fontSize(14)
+                  .fontColor($r('app.color.text_primary'))
+              }
+              .width(32)
+              .height(32)
+              .backgroundColor($r('app.color.surface_color'))
+              .borderRadius(16)
+              .border({
+                width: 1,
+                color: $r('app.color.border_color')
+              })
+              .margin({ left: 8 })
+              .onClick(() => {
+                this.saveMessageAsMemory(message);
               })
             }
             
@@ -1840,6 +1885,16 @@ struct ChatPage {
     }
 
     const message = this.inputText.trim();
+
+    // 检查是否为记忆指令
+    const memoryParseResult = this.memoryManager.parseMemoryCommand(message);
+    if (memoryParseResult.isMemoryCommand) {
+      // 处理记忆指令
+      await this.handleMemoryCommand(memoryParseResult);
+      this.inputText = '';
+      return;
+    }
+
     this.inputText = '';
 
     // 发送消息后关闭输入法，提升用户体验
@@ -3196,5 +3251,87 @@ struct ChatPage {
     }
   }
 
-  
+  /**
+   * 处理记忆指令
+   */
+  private async handleMemoryCommand(parseResult: MemoryCommandParseResult): Promise<void> {
+    try {
+      Logger.info('ChatPage', `处理记忆指令: ${parseResult.command} - "${parseResult.content}"`);
+
+      // 创建保存记忆请求
+      const saveRequest: SaveUserMemoryRequest = {
+        content: parseResult.content,
+        title: parseResult.title,
+        triggerSource: MemoryTriggerSource.USER_COMMAND,
+        sessionId: this.chatViewModel.currentSession?.id,
+        tags: parseResult.tags,
+        category: parseResult.category
+      };
+
+      // 保存记忆
+      const feedback = await this.memoryManager.saveUserMemory(saveRequest);
+
+      // 显示反馈
+      if (feedback.success) {
+        promptAction.showToast({
+          message: feedback.message,
+          duration: 2000
+        });
+        Logger.info('ChatPage', `记忆保存成功: ${feedback.title}`);
+      } else {
+        promptAction.showToast({
+          message: feedback.message,
+          duration: 3000
+        });
+        Logger.error('ChatPage', `记忆保存失败: ${feedback.message}`);
+      }
+
+    } catch (error) {
+      Logger.error('ChatPage', `处理记忆指令异常: ${error}`);
+      promptAction.showToast({
+        message: '记忆保存失败，请稍后重试',
+        duration: 3000
+      });
+    }
+  }
+
+  /**
+   * 保存消息为记忆
+   */
+  private async saveMessageAsMemory(message: Message): Promise<void> {
+    try {
+      Logger.info('ChatPage', `保存消息为记忆: ID=${message.id}, 内容长度=${message.content.length}`);
+
+      // 调用MemoryManager保存消息为记忆
+      const feedback = await this.memoryManager.saveMemoryFromMessage(
+        message.id,
+        message.content,
+        this.chatViewModel.currentSession?.id
+      );
+
+      // 显示反馈
+      if (feedback.success) {
+        promptAction.showToast({
+          message: feedback.message,
+          duration: 2000
+        });
+        Logger.info('ChatPage', `消息记忆保存成功: ${feedback.title}`);
+      } else {
+        promptAction.showToast({
+          message: feedback.message,
+          duration: 3000
+        });
+        Logger.error('ChatPage', `消息记忆保存失败: ${feedback.message}`);
+      }
+
+    } catch (error) {
+      Logger.error('ChatPage', `保存消息记忆异常: ${error}`);
+      promptAction.showToast({
+        message: '记忆保存失败，请稍后重试',
+        duration: 3000
+      });
+    }
+  }
+
+
 }
