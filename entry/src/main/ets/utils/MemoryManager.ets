@@ -146,7 +146,7 @@ export class MemoryManager {
    */
   async getAllMemories(): Promise<MemoryFragment[]> {
     try {
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       const jsonStr = await storage.get(this.MEMORY_STORAGE_KEY, '[]');
       const memories = JSON.parse(jsonStr as string) as MemoryFragment[];
       Logger.debug('MemoryManager', `获取到 ${memories.length} 个记忆碎片`);
@@ -207,7 +207,7 @@ export class MemoryManager {
       const memories = await this.getAllMemories();
       memories.push(memory);
 
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       await storage.put(this.MEMORY_STORAGE_KEY, JSON.stringify(memories));
       await storage.flush();
 
@@ -294,7 +294,7 @@ export class MemoryManager {
 
       memory.updatedAt = Date.now();
 
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       await storage.put(this.MEMORY_STORAGE_KEY, JSON.stringify(memories));
       await storage.flush();
 
@@ -330,7 +330,7 @@ export class MemoryManager {
       }
 
       memories.splice(index, 1);
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       await storage.put(this.MEMORY_STORAGE_KEY, JSON.stringify(memories));
       await storage.flush();
 
@@ -718,7 +718,7 @@ export class MemoryManager {
       if (memory) {
         memory.usageCount++;
         memory.lastUsedAt = Date.now();
-        const storage = AppStorage.getPreferences();
+        const storage = await AppStorage.getStorageAsync();
       await storage.put(this.MEMORY_STORAGE_KEY, JSON.stringify(memories));
       await storage.flush();
         Logger.debug('MemoryManager', `记忆碎片 ${id} 使用次数增加至 ${memory.usageCount}`);
@@ -783,7 +783,7 @@ ${memoryLines.join('\n')}
       memory.isActive = !memory.isActive;
       memory.updatedAt = Date.now();
 
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       await storage.put(this.MEMORY_STORAGE_KEY, JSON.stringify(memories));
       await storage.flush();
 
@@ -808,7 +808,7 @@ ${memoryLines.join('\n')}
    */
   async clearAllMemories(): Promise<MemoryOperationResult> {
     try {
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       await storage.put(this.MEMORY_STORAGE_KEY, JSON.stringify([]));
       await storage.flush();
 
@@ -929,7 +929,7 @@ ${memoryLines.join('\n')}
    */
   private async saveMemoryStatsCache(stats: MemoryStats): Promise<void> {
     try {
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       await storage.put(this.MEMORY_STATS_KEY, JSON.stringify(stats));
       await storage.flush();
       Logger.debug('MemoryManager', `记忆统计数据已缓存: 总计${stats.totalFragments}个，激活${stats.activeFragments}个`);
@@ -943,7 +943,7 @@ ${memoryLines.join('\n')}
    */
   async getCachedMemoryStats(): Promise<MemoryStats | null> {
     try {
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       const jsonStr = await storage.get(this.MEMORY_STATS_KEY, '');
 
       if (!jsonStr) {

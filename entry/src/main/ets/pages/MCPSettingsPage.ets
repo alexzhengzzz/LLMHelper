@@ -60,7 +60,9 @@ struct MCPSettingsPage {
         this.loadMCPState();
         this.loadToolsConfig();
       }
-      this.initializeStatusBarHeight();
+      this.initializeStatusBarHeight().catch((error: Error) => {
+        Logger.error('MCPSettingsPage', 'Failed to initialize status bar height', error);
+      });
       Logger.info('MCPSettingsPage', 'MCP Settings page initialized');
     } catch (error) {
       Logger.error('MCPSettingsPage', 'Failed to initialize', error);
@@ -90,10 +92,10 @@ struct MCPSettingsPage {
   /**
    * 初始化状态栏高度
    */
-  private initializeStatusBarHeight(): void {
+  private async initializeStatusBarHeight(): Promise<void> {
     try {
       // 先尝试从AppStorage获取缓存的状态栏高度
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       const cachedHeight = 44; // 默认状态栏高度
       if (cachedHeight && cachedHeight > 0) {
         this.statusBarHeight = cachedHeight;

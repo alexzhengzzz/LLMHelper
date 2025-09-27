@@ -1871,6 +1871,12 @@ export class AppStorage {
    */
   static async getMCPToolsConfig(): Promise<MCPToolsConfig> {
     try {
+      // 如果存储未初始化，先尝试初始化
+      if (!AppStorage.storage) {
+        Logger.debug('AppStorage', 'Storage not initialized, initializing first for MCP tools config');
+        await AppStorage.initializeStorage();
+      }
+
       const storage = AppStorage.getStorage();
       const configStr = await storage.get(MCP_TOOLS_CONFIG_KEY, '');
 

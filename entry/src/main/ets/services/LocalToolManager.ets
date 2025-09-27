@@ -17,6 +17,7 @@ import CalculatorTool from './CalculatorTool';
 import AppLauncherTool from './AppLauncherTool';
 import MemoryTool from './MemoryTool';
 import { AppStorage, MCPToolsConfig } from '../utils/AppStorage';
+import { AppInitializer } from '../utils/AppInitializer';
 
 /**
  * 本地工具执行器接口
@@ -396,7 +397,10 @@ export class LocalToolManager {
    */
   private async initializeToolsConfig(): Promise<void> {
     try {
-      this.toolsConfig = await AppStorage.getMCPToolsConfig();
+      // 使用AppInitializer的安全存储操作方法确保存储已初始化
+      this.toolsConfig = await AppStorage.safeStorageOperation(async (storage) => {
+        return await AppStorage.getMCPToolsConfig();
+      });
       Logger.info('LocalToolManager', '工具配置初始化完成');
     } catch (error) {
       Logger.error('LocalToolManager', `Failed to initialize tools config: ${error}`);

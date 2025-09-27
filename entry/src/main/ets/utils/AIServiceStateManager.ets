@@ -361,7 +361,7 @@ export class AIServiceStateManager {
    */
   private async loadStateFromStorage(): Promise<AIServiceState | null> {
     try {
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       const stateStr = await storage.get(AI_SERVICE_STATE_KEY, '') as string;
 
       if (!stateStr) {
@@ -382,7 +382,7 @@ export class AIServiceStateManager {
    */
   private async saveStateToStorage(): Promise<void> {
     try {
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       const stateStr = JSON.stringify(this.currentState);
       await storage.put(AI_SERVICE_STATE_KEY, stateStr);
       await storage.flush();

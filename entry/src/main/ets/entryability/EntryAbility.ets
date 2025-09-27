@@ -37,6 +37,7 @@ export default class EntryAbility extends UIAbility {
 
   private initializeOtherManagers(): void {
     try {
+      // 确保在初始化LocalToolManager之前，AppStorage已经初始化完成
       LocalToolManager.getInstance(this.context);
     } catch (e) {
       hilog.error(0x0000, 'testTag', `Failed to initialize LocalToolManager: ${e.message}`);

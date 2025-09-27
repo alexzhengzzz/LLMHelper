@@ -389,17 +389,17 @@ export class PromptRecommendationManager {
    */
   private async loadUsageStats(): Promise<void> {
     try {
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       const statsStr = await storage.get(PromptRecommendationManager.USAGE_STATS_KEY, '[]');
-      
+
       if (statsStr && statsStr !== '[]') {
         const statsArray: PromptUsageStats[] = JSON.parse(statsStr as string);
         this.usageStats.clear();
-        
+
         statsArray.forEach(stats => {
           this.usageStats.set(stats.promptId, stats);
         });
-        
+
         Logger.debug('PromptRecommendationManager', `加载了 ${statsArray.length} 条使用统计`);
       }
     } catch (error) {
@@ -413,12 +413,12 @@ export class PromptRecommendationManager {
   private async saveUsageStats(): Promise<void> {
     try {
       const statsArray = Array.from(this.usageStats.values());
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       const jsonStr = JSON.stringify(statsArray);
-      
+
       await storage.put(PromptRecommendationManager.USAGE_STATS_KEY, jsonStr);
       await storage.flush();
-      
+
       Logger.debug('PromptRecommendationManager', `保存了 ${statsArray.length} 条使用统计`);
     } catch (error) {
       Logger.error('PromptRecommendationManager', `保存统计数据失败: ${error}`);
@@ -430,9 +430,9 @@ export class PromptRecommendationManager {
    */
   private async loadConfig(): Promise<void> {
     try {
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       const configStr = await storage.get(PromptRecommendationManager.RECOMMENDATION_CONFIG_KEY, '');
-      
+
       if (configStr) {
         const loadedConfig: RecommendationConfig = JSON.parse(configStr as string);
         const defaultConfig = this.getDefaultConfig();
@@ -441,7 +441,7 @@ export class PromptRecommendationManager {
           usageWeightFactor: loadedConfig.usageWeightFactor || defaultConfig.usageWeightFactor,
           recencyWeightFactor: loadedConfig.recencyWeightFactor || defaultConfig.recencyWeightFactor,
           categoryDiversityFactor: loadedConfig.categoryDiversityFactor || defaultConfig.categoryDiversityFactor,
-          enableVoiceBasedRecommendation: loadedConfig.enableVoiceBasedRecommendation !== undefined ? 
+          enableVoiceBasedRecommendation: loadedConfig.enableVoiceBasedRecommendation !== undefined ?
             loadedConfig.enableVoiceBasedRecommendation : defaultConfig.enableVoiceBasedRecommendation
         };
         Logger.debug('PromptRecommendationManager', '推荐配置加载成功');
@@ -456,12 +456,12 @@ export class PromptRecommendationManager {
    */
   private async saveConfig(): Promise<void> {
     try {
-      const storage = AppStorage.getPreferences();
+      const storage = await AppStorage.getStorageAsync();
       const jsonStr = JSON.stringify(this.config);
-      
+
       await storage.put(PromptRecommendationManager.RECOMMENDATION_CONFIG_KEY, jsonStr);
       await storage.flush();
-      
+
       Logger.debug('PromptRecommendationManager', '推荐配置保存成功');
     } catch (error) {
       Logger.error('PromptRecommendationManager', `保存推荐配置失败: ${error}`);
