@@ -2154,6 +2154,61 @@ export class ChatViewModel {
   }
 
   /**
+   * 创建多人会话
+   */
+  async createNewMultiRoleSession(participantPrompts: SystemPrompt[]): Promise<Session | null> {
+    if (!participantPrompts || participantPrompts.length === 0) {
+      Logger.warn('ChatViewModel', '多人会话创建请求缺少参与者');
+      return null;
+    }
+
+    try {
+      Logger.info('ChatViewModel', `创建多人会话，参与者数量: ${participantPrompts.length}`);
+
+      if (this.currentSession) {
+        await this.saveMessages();
+      }
+
+      await this.stopAllAudio();
+
+      const newSession = await this.sessionManager.createMultiRoleSession(participantPrompts);
+
+      this.currentSession = newSession;
+      this.messages = [];
+      await this.loadSessions();
+
+      const participantNames = participantPrompts.map(participant => participant.name).join(', ');
+      Logger.info('ChatViewModel', `多人会话创建成功: ${newSession.id}, 参与者: ${participantNames}`);
+      return newSession;
+
+    } catch (error) {
+      const errorContext = new ErrorContext();
+      errorContext.module = 'ChatViewModel';
+      errorContext.function = 'createNewMultiRoleSession';
+      errorContext.additionalInfo = JSON.stringify({
+        participantCount: participantPrompts.length,
+        participantIds: participantPrompts.map(participant => participant.id)
+      });
+
+      const errorManager = ErrorManager.getInstance();
+      if (error instanceof Error) {
+        errorManager.handleError(
+          errorManager.createError(
+            ErrorType.BUSINESS,
+            ErrorCode.UNKNOWN_ERROR,
+            `创建多人会话失败: ${error}`,
+            errorContext,
+            ErrorLevel.ERROR,
+            error
+          )
+        );
+      }
+
+      return null;
+    }
+  }
+
+  /**
    * 更换当前会话的系统提示词
    */
   async changeCurrentSessionPrompt(selectedPrompt: SystemPrompt | null): Promise<boolean> {

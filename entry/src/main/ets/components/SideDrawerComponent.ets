@@ -9,7 +9,7 @@ import { Logger } from '../utils/Logger';
 import { Session, SystemPrompt } from '../models/ChatModels';
 import { ChatViewModel } from '../viewmodels/ChatViewModel';
 import { SwipeableSessionItemComponent } from './SwipeableSessionItemComponent';
-import { NewSessionDialogComponent } from './NewSessionDialogComponent';
+import { NewSessionDialogComponent, NewSessionSelection } from './NewSessionDialogComponent';
 import { RoleViewComponent } from './RoleViewComponent';
 import { AppConfigManager } from '../utils/AppConfigManager';
 import { RoleManager } from '../utils/RoleManager';
@@ -385,7 +385,7 @@ export struct SideDrawerComponent {
           // 对话框
           NewSessionDialogComponent({
             systemPrompts: this.chatViewModel?.systemPrompts || [],
-            onConfirm: (prompt) => this.confirmNewSession(prompt),
+            onConfirm: (selection: NewSessionSelection) => this.confirmNewSession(selection),
             onCancel: () => this.cancelNewSession()
           })
         }
@@ -917,9 +917,13 @@ export struct SideDrawerComponent {
   /**
    * 确认创建新会话
    */
-  private async confirmNewSession(selectedPrompt: SystemPrompt | null): Promise<void> {
+  private async confirmNewSession(selection: NewSessionSelection): Promise<void> {
     try {
-      Logger.info('SideDrawerComponent', `确认创建新会话，系统提示词: ${selectedPrompt?.name || '无'}`);
+      const participantNames = selection.participants.map(participant => participant.name).join(', ');
+      Logger.info(
+        'SideDrawerComponent',
+        `确认创建新会话，模式: ${selection.mode}, 系统提示词: ${selection.systemPrompt?.name || '无'}, 参与者: ${participantNames || '无'}`
+      );
       
       this.showNewSessionDialog = false;
       
@@ -928,8 +932,13 @@ export struct SideDrawerComponent {
         return;
       }
 
-      // 使用新的带系统提示词的创建方法
-      const newSession = await this.chatViewModel.createNewSessionWithPrompt(selectedPrompt);
+      let newSession: Session | null = null;
+
+      if (selection.mode === 'multi') {
+        newSession = await this.chatViewModel.createNewMultiRoleSession(selection.participants);
+      } else {
+        newSession = await this.chatViewModel.createNewSessionWithPrompt(selection.systemPrompt);
+      }
       if (newSession) {
         Logger.info('SideDrawerComponent', `新会话创建成功: ${newSession.name}`);
         

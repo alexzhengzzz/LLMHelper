@@ -158,6 +158,49 @@ export class SessionManager {
   }
 
   /**
+   * 创建多人会话
+   */
+  async createMultiRoleSession(participantPrompts: SystemPrompt[]): Promise<MultiRoleSession> {
+    try {
+      Logger.info('SessionManager', `创建多人会话，参与者数量: ${participantPrompts.length}`);
+
+      const existingSessions = await this.getSessions();
+      if (existingSessions.length >= this.MAX_SESSIONS) {
+        Logger.warn('SessionManager', `会话数量已达上限 ${this.MAX_SESSIONS}`);
+        throw new Error(`会话数量已达上限 ${this.MAX_SESSIONS} 个`);
+      }
+
+      const participants = participantPrompts.map(prompt =>
+        new SessionParticipant(prompt.id, prompt.name, prompt.roleIcon || undefined)
+      );
+      const normalizedParticipants = this.normalizeParticipants(participants);
+
+      const sessionName = this.buildMultiSessionName(normalizedParticipants, existingSessions.length);
+      const session = new MultiRoleSession(sessionName, normalizedParticipants, []);
+
+      await AppStorage.saveSession(session);
+      await this.setCurrentSession(session.id);
+
+      Logger.info('SessionManager', `新多人会话创建成功: ${session.id}`);
+      return session;
+    } catch (error) {
+      Logger.error('SessionManager', `创建多人会话失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  private buildMultiSessionName(participants: SessionParticipant[], existingCount: number): string {
+    const baseName = `多人会话 ${existingCount + 1}`;
+    if (!participants || participants.length === 0) {
+      return baseName;
+    }
+
+    const previewNames = participants.slice(0, 2).map(participant => participant.displayName).join(', ');
+    const hasMore = participants.length > 2;
+    return `${baseName} (${previewNames}${hasMore ? '...' : ''})`;
+  }
+
+  /**
    * 通过系统提示词创建一个新会话，并返回会话ID
    */
   async createSessionFromPrompt(prompt: SystemPrompt): Promise<string> {

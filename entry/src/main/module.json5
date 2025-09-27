@@ -43,6 +43,16 @@
           "when":"inuse"
         }
       },
+//      {
+//        "name" : "ohos.permission.GET_BUNDLE_INFO_PRIVILEGED",
+//        "reason": "$string:app_name",
+//        "usedScene": {
+//          "abilities": [
+//            "EntryAbility"
+//          ],
+//          "when":"always"
+//        }
+//      },
       {
         "name": "ohos.permission.APPROXIMATELY_LOCATION",
         "reason": "$string:app_name",
