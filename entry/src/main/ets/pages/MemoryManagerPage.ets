@@ -1,6 +1,6 @@
 import { router } from '@kit.ArkUI';
 import { MemoryManager, MemoryItemWithoutId } from '../utils/MemoryManager';
-import { MemoryItem, MemoryStats, MemoryCategory, MemoryImportance } from '../types/MemoryTypes';
+import { MemoryItem, MemoryStats, MemoryCategory, MemoryImportance, ObservableMemoryStats, ObservableMemoryCategoryCounts, ObservableMemoryImportanceCounts } from '../types/MemoryTypes';
 import { MemoryItemComponent } from '../components/MemoryItemComponent';
 import { Logger } from '../utils/Logger';
 import { BasicAnimations, AnimationConfigManager } from '../animations';
@@ -19,28 +19,7 @@ interface MemoryItemWithId extends MemoryItem {
 @ComponentV2
 struct MemoryManagerPage {
   @Local private memoryItems: MemoryItemWithId[] = [];
-  @Local private memoryStats: MemoryStats = {
-    totalFragments: 0,
-    activeFragments: 0,
-    categoryCounts: {
-      personal: 0,
-      preference: 0,
-      work: 0,
-      study: 0,
-      hobby: 0,
-      family: 0,
-      health: 0,
-      custom: 0
-    },
-    importanceCounts: {
-      low: 0,
-      medium: 0,
-      high: 0,
-      critical: 0
-    },
-    lastUpdated: 0,
-    totalUsageCount: 0
-  };
+  @Local private memoryStats: ObservableMemoryStats = new ObservableMemoryStats();
   @Local private selectedCategory: MemoryCategory | 'all' = 'all';
   @Local private selectedImportance: MemoryImportance | 'all' = 'all';
   @Local private searchQuery: string = '';
@@ -113,7 +92,8 @@ struct MemoryManagerPage {
       this.isLoading = true;
 
       // 加载记忆统计信息
-      this.memoryStats = await this.memoryManager.getMemoryStats();
+      const stats = await this.memoryManager.getMemoryStats();
+      this.memoryStats.updateFromStats(stats);
       Logger.info('MemoryManagerPage', `记忆统计信息加载成功: 总计${this.memoryStats.totalFragments}个`);
 
       // 加载记忆列表
@@ -226,10 +206,14 @@ struct MemoryManagerPage {
         lastUsedAt: 0
       };
 
-      await this.memoryManager.addMemoryItem(newMemory);
+      Logger.info('MemoryManagerPage', `准备添加记忆: ${newMemory.title}`);
+      const result = await this.memoryManager.addMemoryItem(newMemory);
+      Logger.info('MemoryManagerPage', `添加记忆结果: ${JSON.stringify(result)}`);
 
       // 重新加载数据
+      Logger.info('MemoryManagerPage', `开始重新加载记忆数据`);
       await this.loadMemoryData();
+      Logger.info('MemoryManagerPage', `重新加载完成，当前记忆统计: 总计${this.memoryStats.totalFragments}个，激活${this.memoryStats.activeFragments}个`);
 
       // 关闭对话框
       this.showAddDialog = false;

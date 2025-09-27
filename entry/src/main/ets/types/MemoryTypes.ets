@@ -95,6 +95,107 @@ export interface MemoryStats {
   totalUsageCount: number; // 总使用次数
 }
 
+// 可观察的记忆分类统计类
+@ObservedV2
+export class ObservableMemoryCategoryCounts {
+  @Trace personal: number = 0;
+  @Trace preference: number = 0;
+  @Trace work: number = 0;
+  @Trace study: number = 0;
+  @Trace hobby: number = 0;
+  @Trace family: number = 0;
+  @Trace health: number = 0;
+  @Trace custom: number = 0;
+
+  updateFromCounts(counts: MemoryCategoryCounts): void {
+    this.personal = counts.personal;
+    this.preference = counts.preference;
+    this.work = counts.work;
+    this.study = counts.study;
+    this.hobby = counts.hobby;
+    this.family = counts.family;
+    this.health = counts.health;
+    this.custom = counts.custom;
+  }
+
+  toCategoryCounts(): MemoryCategoryCounts {
+    return {
+      personal: this.personal,
+      preference: this.preference,
+      work: this.work,
+      study: this.study,
+      hobby: this.hobby,
+      family: this.family,
+      health: this.health,
+      custom: this.custom
+    };
+  }
+}
+
+// 可观察的记忆重要性统计类
+@ObservedV2
+export class ObservableMemoryImportanceCounts {
+  @Trace low: number = 0;
+  @Trace medium: number = 0;
+  @Trace high: number = 0;
+  @Trace critical: number = 0;
+
+  updateFromCounts(counts: MemoryImportanceCounts): void {
+    this.low = counts.low;
+    this.medium = counts.medium;
+    this.high = counts.high;
+    this.critical = counts.critical;
+  }
+
+  toImportanceCounts(): MemoryImportanceCounts {
+    return {
+      low: this.low,
+      medium: this.medium,
+      high: this.high,
+      critical: this.critical
+    };
+  }
+}
+
+// 可观察的记忆统计类
+@ObservedV2
+export class ObservableMemoryStats {
+  @Trace totalFragments: number = 0;
+  @Trace activeFragments: number = 0;
+  @Trace totalUsageCount: number = 0;
+  @Trace lastUpdated: number = 0;
+  @Trace categoryCounts: ObservableMemoryCategoryCounts = new ObservableMemoryCategoryCounts();
+  @Trace importanceCounts: ObservableMemoryImportanceCounts = new ObservableMemoryImportanceCounts();
+
+  constructor(stats?: MemoryStats) {
+    if (stats) {
+      this.updateFromStats(stats);
+    }
+  }
+
+  updateFromStats(stats: MemoryStats): void {
+    this.totalFragments = stats.totalFragments;
+    this.activeFragments = stats.activeFragments;
+    this.totalUsageCount = stats.totalUsageCount;
+    this.lastUpdated = stats.lastUpdated;
+
+    // 使用嵌套可观察对象的更新方法
+    this.categoryCounts.updateFromCounts(stats.categoryCounts);
+    this.importanceCounts.updateFromCounts(stats.importanceCounts);
+  }
+
+  toMemoryStats(): MemoryStats {
+    return {
+      totalFragments: this.totalFragments,
+      activeFragments: this.activeFragments,
+      totalUsageCount: this.totalUsageCount,
+      lastUpdated: this.lastUpdated,
+      categoryCounts: this.categoryCounts.toCategoryCounts(),
+      importanceCounts: this.importanceCounts.toImportanceCounts()
+    };
+  }
+}
+
 // 记忆导出元数据接口
 export interface MemoryExportMetadata {
   totalCount: number;

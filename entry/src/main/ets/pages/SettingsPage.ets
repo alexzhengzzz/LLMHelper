@@ -14,7 +14,7 @@ import { BasicAnimations, AnimationConfigManager } from '../animations';
 import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { MemoryManager } from '../utils/MemoryManager';
-import { MemoryStats, MemoryCategoryCounts, MemoryImportanceCounts } from '../types/MemoryTypes';
+import { MemoryStats } from '../types/MemoryTypes';
 
 interface SettingItem {
   title: string;
@@ -98,32 +98,9 @@ struct SettingsPage {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private fontManager: FontManager = FontManager.getInstance();
   private memoryManager: MemoryManager = MemoryManager.getInstance();
-  @Local private defaultCategoryCounts: MemoryCategoryCounts = {
-    personal: 0,
-    preference: 0,
-    work: 0,
-    study: 0,
-    hobby: 0,
-    family: 0,
-    health: 0,
-    custom: 0
-  };
-
-  @Local private defaultImportanceCounts: MemoryImportanceCounts = {
-    low: 0,
-    medium: 0,
-    high: 0,
-    critical: 0
-  };
-
-  @Local memoryStats: MemoryStats = {
-    totalFragments: 0,
-    activeFragments: 0,
-    categoryCounts: this.defaultCategoryCounts,
-    importanceCounts: this.defaultImportanceCounts,
-    lastUpdated: 0,
-    totalUsageCount: 0
-  };
+  // 直接使用@Local管理记忆统计的显示数据
+  @Local memoryTotalFragments: number = -1;
+  @Local memoryActiveFragments: number = -1;
   private avatarListener: (settings: AvatarSettings) => void = (settings: AvatarSettings) => {
     // 更新本地状态，@Computed会自动处理后续更新
     this.aiAvatarType = settings.aiAvatarType;
@@ -156,6 +133,14 @@ struct SettingsPage {
     Logger.info('SettingsPage', `更新后字体设置: ${JSON.stringify(this.fontSettings)}`);
   };
 
+  private memoryStatsListener: (stats: MemoryStats) => void = (stats: MemoryStats) => {
+    // 更新本地记忆统计状态
+    Logger.info('SettingsPage', `收到记忆统计变更通知: 总计${stats.totalFragments}个，激活${stats.activeFragments}个`);
+    this.memoryTotalFragments = stats.totalFragments;
+    this.memoryActiveFragments = stats.activeFragments;
+    Logger.info('SettingsPage', `记忆统计@Local变量已更新: 总计${this.memoryTotalFragments}个，激活${this.memoryActiveFragments}个`);
+  };
+
   async aboutToAppear(): Promise<void> {
     Logger.info('SettingsPage', 'aboutToAppear');
     this.resetEnterAnimationState();
@@ -168,10 +153,20 @@ struct SettingsPage {
       Logger.error('SettingsPage', `加载自动播报设置失败: ${error}`);
     }
 
-    // 加载记忆统计信息
+    // 加载记忆统计信息（优先从缓存读取）
     try {
-      this.memoryStats = await this.memoryManager.getMemoryStats();
-      Logger.info('SettingsPage', `记忆统计信息加载成功: 总计${this.memoryStats.totalFragments}个，激活${this.memoryStats.activeFragments}个`);
+      let stats = await this.memoryManager.getCachedMemoryStats();
+      if (!stats) {
+        Logger.info('SettingsPage', '缓存为空，从实时数据获取记忆统计');
+        stats = await this.memoryManager.getMemoryStats();
+        // 缓存实时数据
+        await this.memoryManager.updateMemoryStatsCache();
+      } else {
+        Logger.info('SettingsPage', '从缓存获取记忆统计');
+      }
+      this.memoryTotalFragments = stats.totalFragments;
+      this.memoryActiveFragments = stats.activeFragments;
+      Logger.info('SettingsPage', `记忆统计信息加载成功: 总计${this.memoryTotalFragments}个，激活${this.memoryActiveFragments}个`);
     } catch (error) {
       Logger.error('SettingsPage', `加载记忆统计信息失败: ${error}`);
     }
@@ -245,6 +240,9 @@ struct SettingsPage {
     // 添加服务器配置变更监听器
     this.serverConfigManager.addConfigChangeListener(this.serverConfigListener);
 
+    // 添加记忆统计监听器
+    this.memoryManager.addMemoryStatsListener(this.memoryStatsListener);
+
     // 初始化字体管理器
     try {
       await this.fontManager.initialize();
@@ -289,17 +287,50 @@ struct SettingsPage {
     // 重新加载服务器配置，确保显示最新状态
     try {
       const serverConfig = this.serverConfigManager.getCurrentServer();
-      
+
       // 更新各个属性以确保响应性
       this.currentServer.ip = serverConfig.ip;
       this.currentServer.port = serverConfig.port;
       this.currentServer.protocol = serverConfig.protocol;
       this.currentServer.wsProtocol = serverConfig.wsProtocol;
       this.currentServer.description = serverConfig.description;
-      
+
       Logger.info('SettingsPage', `重新加载服务器配置完成: ${serverConfig.protocol}://${serverConfig.ip}:${serverConfig.port}`);
     } catch (error) {
       Logger.error('SettingsPage', `重新加载服务器配置失败: ${error}`);
+    }
+
+    // 重新加载记忆统计信息，确保显示最新状态（优先从缓存读取）
+    try {
+      const previousTotal = this.memoryTotalFragments;
+      const previousActive = this.memoryActiveFragments;
+
+      Logger.info('SettingsPage', `开始重新加载记忆统计信息，当前状态: 总计${previousTotal}个，激活${previousActive}个`);
+
+      let latestStats = await this.memoryManager.getCachedMemoryStats();
+      if (!latestStats) {
+        Logger.info('SettingsPage', '缓存为空，从实时数据获取记忆统计');
+        latestStats = await this.memoryManager.getMemoryStats();
+        // 缓存实时数据
+        await this.memoryManager.updateMemoryStatsCache();
+      } else {
+        Logger.info('SettingsPage', '从缓存获取记忆统计');
+      }
+      Logger.info('SettingsPage', `获取到最新统计: 总计${latestStats.totalFragments}个，激活${latestStats.activeFragments}个`);
+
+      this.memoryTotalFragments = latestStats.totalFragments;
+      this.memoryActiveFragments = latestStats.activeFragments;
+      Logger.info('SettingsPage', `更新@Local状态变量后: 总计${this.memoryTotalFragments}个，激活${this.memoryActiveFragments}个`);
+
+      if (previousTotal !== this.memoryTotalFragments ||
+          previousActive !== this.memoryActiveFragments) {
+        Logger.info('SettingsPage', `记忆统计信息已更新: 总计${previousTotal}->${this.memoryTotalFragments}个，激活${previousActive}->${this.memoryActiveFragments}个`);
+      } else {
+        Logger.debug('SettingsPage', `记忆统计信息未变更: 总计${this.memoryTotalFragments}个，激活${this.memoryActiveFragments}个`);
+      }
+
+    } catch (error) {
+      Logger.error('SettingsPage', `重新加载记忆统计信息失败: ${error}`);
     }
   }
 
@@ -312,6 +343,9 @@ struct SettingsPage {
 
     // 移除服务器配置变更监听器
     this.serverConfigManager.removeConfigChangeListener(this.serverConfigListener);
+
+    // 移除记忆统计监听器
+    this.memoryManager.removeMemoryStatsListener(this.memoryStatsListener);
 
     // 移除字体设置监听器
     this.fontManager.removeListener(this.fontSettingsListener);
@@ -487,11 +521,17 @@ struct SettingsPage {
     ];
   }
 
-  private getMemorySettings(): SettingItem[] {
+  // 计算属性：自动生成记忆管理设置项数组
+  @Computed
+  get computedMemorySettings(): SettingItem[] {
+    // 直接依赖@Local变量以确保UI响应
+    let subtitle = this.memoryTotalFragments + '个记忆碎片，' + this.memoryActiveFragments + '个已激活';
+    Logger.info('SettingsPage', `computedMemorySettings被调用: ${subtitle}，时间戳: ${Date.now()}`);
+
     return [
       {
         title: '记忆中心',
-        subtitle: `${this.memoryStats.totalFragments}个记忆碎片，${this.memoryStats.activeFragments}个已激活`,
+        subtitle: subtitle,
         type: 'button'
       }
     ];
@@ -606,7 +646,7 @@ struct SettingsPage {
         this.buildSettingsGroup('个人资料', this.computedProfileSettingsItems, 'profile')
 
         // 记忆管理设置
-        this.buildSettingsGroup('记忆管理', this.getMemorySettings(), 'memory')
+        this.buildSettingsGroup('记忆管理', this.computedMemorySettings, 'memory')
 
         // 语音播报设置
         this.buildSettingsGroup('语音播报', this.getVoiceSettings(), 'voice')
@@ -1236,6 +1276,12 @@ struct SettingsPage {
       } else if (item.title === '字体家族') {
         return `当前: ${FontManager.getFontFamilyDisplayText(this.fontSettings.fontFamily)}`;
       }
+    } else if (item.title === '记忆中心') {
+      // 直接读取@Local记忆统计，确保UI随监听更新刷新
+      if (this.memoryTotalFragments < 0 || this.memoryActiveFragments < 0) {
+        return '记忆统计加载中…';
+      }
+      return `${this.memoryTotalFragments}个记忆碎片，${this.memoryActiveFragments}个已激活`;
     }
     return item.subtitle || '';
   }

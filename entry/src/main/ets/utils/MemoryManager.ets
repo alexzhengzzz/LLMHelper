@@ -38,6 +38,8 @@ export class MemoryManager {
   private static instance: MemoryManager | null = null;
   private readonly MEMORY_STORAGE_KEY = 'user_memories';
   private readonly MEMORY_CONFIG_KEY = 'memory_injection_config';
+  private readonly MEMORY_STATS_KEY = 'memory_stats_cache';
+  private memoryStatsListeners: Array<(stats: MemoryStats) => void> = [];
 
   private constructor() {}
 
@@ -106,6 +108,9 @@ export class MemoryManager {
       const storage = AppStorage.getPreferences();
       await storage.put(this.MEMORY_STORAGE_KEY, JSON.stringify(memories));
       await storage.flush();
+
+      // 更新统计缓存
+      await this.updateMemoryStatsCache();
 
       Logger.info('MemoryManager', `创建记忆碎片成功: ${memory.id}`);
       return {
@@ -208,6 +213,9 @@ export class MemoryManager {
       const storage = AppStorage.getPreferences();
       await storage.put(this.MEMORY_STORAGE_KEY, JSON.stringify(memories));
       await storage.flush();
+
+      // 更新统计缓存
+      await this.updateMemoryStatsCache();
 
       Logger.info('MemoryManager', `删除记忆碎片成功: ${id}`);
       return {
@@ -598,5 +606,90 @@ ${memoryLines.join('\n')}
   async deleteMemoryItem(id: string): Promise<boolean> {
     const result = await this.deleteMemory(id);
     return result.success;
+  }
+
+  /**
+   * 保存记忆统计数据到缓存
+   */
+  private async saveMemoryStatsCache(stats: MemoryStats): Promise<void> {
+    try {
+      const storage = AppStorage.getPreferences();
+      await storage.put(this.MEMORY_STATS_KEY, JSON.stringify(stats));
+      await storage.flush();
+      Logger.debug('MemoryManager', `记忆统计数据已缓存: 总计${stats.totalFragments}个，激活${stats.activeFragments}个`);
+    } catch (error) {
+      Logger.error('MemoryManager', `保存记忆统计缓存失败: ${error}`);
+    }
+  }
+
+  /**
+   * 从缓存获取记忆统计数据
+   */
+  async getCachedMemoryStats(): Promise<MemoryStats | null> {
+    try {
+      const storage = AppStorage.getPreferences();
+      const jsonStr = await storage.get(this.MEMORY_STATS_KEY, '');
+
+      if (!jsonStr) {
+        Logger.debug('MemoryManager', '未找到记忆统计缓存');
+        return null;
+      }
+
+      const stats = JSON.parse(jsonStr as string) as MemoryStats;
+      Logger.debug('MemoryManager', `从缓存获取记忆统计: 总计${stats.totalFragments}个，激活${stats.activeFragments}个`);
+      return stats;
+    } catch (error) {
+      Logger.error('MemoryManager', `获取记忆统计缓存失败: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * 更新记忆统计缓存（在数据变更时调用）
+   */
+  async updateMemoryStatsCache(): Promise<void> {
+    try {
+      const stats = await this.getMemoryStats();
+      await this.saveMemoryStatsCache(stats);
+      Logger.info('MemoryManager', `记忆统计缓存已更新: 总计${stats.totalFragments}个，激活${stats.activeFragments}个`);
+
+      // 通知所有监听器
+      this.notifyMemoryStatsListeners(stats);
+    } catch (error) {
+      Logger.error('MemoryManager', `更新记忆统计缓存失败: ${error}`);
+    }
+  }
+
+  /**
+   * 添加记忆统计变更监听器
+   */
+  addMemoryStatsListener(listener: (stats: MemoryStats) => void): void {
+    this.memoryStatsListeners.push(listener);
+    Logger.debug('MemoryManager', `添加记忆统计监听器，当前监听器数量: ${this.memoryStatsListeners.length}`);
+  }
+
+  /**
+   * 移除记忆统计变更监听器
+   */
+  removeMemoryStatsListener(listener: (stats: MemoryStats) => void): void {
+    const index = this.memoryStatsListeners.indexOf(listener);
+    if (index > -1) {
+      this.memoryStatsListeners.splice(index, 1);
+      Logger.debug('MemoryManager', `移除记忆统计监听器，当前监听器数量: ${this.memoryStatsListeners.length}`);
+    }
+  }
+
+  /**
+   * 通知所有记忆统计监听器
+   */
+  private notifyMemoryStatsListeners(stats: MemoryStats): void {
+    Logger.debug('MemoryManager', `通知 ${this.memoryStatsListeners.length} 个记忆统计监听器`);
+    this.memoryStatsListeners.forEach(listener => {
+      try {
+        listener(stats);
+      } catch (error) {
+        Logger.error('MemoryManager', `记忆统计监听器执行失败: ${error}`);
+      }
+    });
   }
 }
