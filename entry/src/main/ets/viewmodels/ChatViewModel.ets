@@ -239,6 +239,8 @@ export class ChatViewModel {
     
     // 获取包含记忆注入的系统提示词
     const systemPromptWithMemory = await this.getSystemPromptWithMemory();
+    Logger.info('ChatViewModel', `深度思考模式 - 系统提示词长度: ${systemPromptWithMemory.length} 字符`);
+
     const filteredMessages = this.messages
       .filter(msg => !msg.isLoading && msg.role !== MessageRole.SYSTEM)
       .map(msg => ({
@@ -253,6 +255,9 @@ export class ChatViewModel {
         role: 'system',
         content: systemPromptWithMemory
       });
+      Logger.info('ChatViewModel', '深度思考模式 - 已添加系统提示词到消息列表');
+    } else {
+      Logger.warn('ChatViewModel', '深度思考模式 - 未获取到系统提示词');
     }
 
     // 定义深度思考回调
@@ -385,6 +390,7 @@ export class ChatViewModel {
       // 直连模式 + 联网搜索：使用混合聊天服务
       // 获取包含记忆注入的系统提示词
       const systemPromptWithMemory = await this.getSystemPromptWithMemory();
+      Logger.info('ChatViewModel', `混合聊天模式 - 系统提示词长度: ${systemPromptWithMemory.length} 字符`);
 
       const hybridRequest: HybridChatRequest = {
         message: content,
@@ -444,12 +450,16 @@ export class ChatViewModel {
 
       const finalMessages = [...filteredMessages];
       const systemPromptWithMemory = await this.getSystemPromptWithMemory();
+      Logger.info('ChatViewModel', `服务端模式 - 系统提示词长度: ${systemPromptWithMemory.length} 字符`);
 
       if (systemPromptWithMemory) {
         finalMessages.unshift({
           role: 'system',
           content: systemPromptWithMemory
         });
+        Logger.info('ChatViewModel', '服务端模式 - 已添加系统提示词到消息列表');
+      } else {
+        Logger.warn('ChatViewModel', '服务端模式 - 未获取到系统提示词');
       }
 
       const apiRequest: APIChatRequest = {
@@ -494,6 +504,7 @@ export class ChatViewModel {
     try {
       // 获取包含记忆注入的系统提示词
       const systemPromptWithMemory = await this.getSystemPromptWithMemory();
+      Logger.info('ChatViewModel', `智能消息模式 - 系统提示词长度: ${systemPromptWithMemory.length} 字符`);
 
       // 使用APIManager的智能聊天功能
       const response = await this.apiManager.sendSmartChatRequest(
@@ -679,8 +690,27 @@ export class ChatViewModel {
       // 使用参与者指定的模型或默认模型
       const model = participant.model || this.currentModel;
 
+      // 检查messages是否已经包含系统提示词
+      const hasSystemPrompt = messages.some(msg => msg.role === 'system');
+
+      let chatMessages: SimpleMessage[];
+
+      if (!hasSystemPrompt && participant.systemPrompt && participant.systemPrompt.trim()) {
+        // 如果没有系统提示词且参与者有系统提示词，添加到消息开头
+        chatMessages = [
+          {
+            role: 'system',
+            content: participant.systemPrompt.trim()
+          },
+          ...messages
+        ];
+      } else {
+        // 否则直接使用传入的消息（应该已经包含系统提示词）
+        chatMessages = messages;
+      }
+
       const apiRequest: APIChatRequest = {
-        messages: messages,
+        messages: chatMessages,
         model: model,
         max_tokens: 1500, // 增加回复长度限制，支持更完整的表达
         temperature: 0.7,
@@ -841,18 +871,23 @@ ${discussionContent}
     discussionIntensity: number,
     previousMessages: Message[]
   ): string {
-    const basePrompt = `你是一个专业的辩论参与者，名为${participant.displayName}。
-
-**辩论主题**：${debateTopic}
-
-**当前阶段**：第${currentRound}轮（共${totalRounds}轮）
-
-**讨论激烈程度**：${discussionIntensity.toFixed(1)}/10
+    // 首先使用角色的原始系统提示词（如果存在）
+    const rolePrompt = participant.systemPrompt || `你是一个专业的辩论参与者，名为${participant.displayName}。
 
 **你的角色定位**：
 - 基于${participant.displayName}的专业背景和观点
 - 提供有深度和见解的论点
 - 保持建设性的辩论态度`;
+
+    const basePrompt = `${rolePrompt}
+
+---
+
+**辩论主题**：${debateTopic}
+
+**当前阶段**：第${currentRound}轮（共${totalRounds}轮）
+
+**讨论激烈程度**：${discussionIntensity.toFixed(1)}/10`;
 
     let contextualPrompt = basePrompt;
 
@@ -1256,7 +1291,7 @@ ${debateMessages.map(m => `${m.senderName || '参与者'}: ${m.content}`).join('
   ): SimpleMessage[] {
     const messages: SimpleMessage[] = [];
 
-    // 添加系统提示词
+    // 添加系统提示词（这里包含了角色原始提示词和辩论上下文）
     messages.push({
       role: 'system',
       content: systemPrompt
@@ -1916,17 +1951,43 @@ ${debateMessages.map(m => `${m.senderName || '参与者'}: ${m.content}`).join('
   }
 
   /**
-   * 获取当前会话的系统提示词
+   * 获取当前会话的系统提示词 - 增强版本支持多轮角色对话
    */
   getCurrentSessionSystemPrompt(): SystemPrompt | null {
-    if (!this.currentSession?.systemPromptId) {
+    if (!this.currentSession) {
+      Logger.debug('ChatViewModel', '当前没有会话');
       return null;
     }
-    return this.systemPrompts.find(p => p.id === this.currentSession!.systemPromptId) || null;
+
+    // 优先使用活跃角色ID，如果没有则使用绑定的系统提示词ID
+    const activeRoleId = this.currentSession.getActiveRoleId?.() || this.currentSession.activeRoleId;
+    const targetPromptId = activeRoleId || this.currentSession.systemPromptId;
+
+    if (!targetPromptId) {
+      Logger.debug('ChatViewModel', '当前会话未绑定系统提示词');
+      return null;
+    }
+
+    const prompt = this.systemPrompts.find(p => p.id === targetPromptId);
+    if (prompt) {
+      Logger.info('ChatViewModel', `获取到系统提示词: ${prompt.name} (ID: ${prompt.id})`);
+      if (prompt.isRole) {
+        Logger.info('ChatViewModel', `当前为角色模式: ${prompt.roleCategory} - ${prompt.roleDescription}`);
+      }
+
+      // 如果活跃角色与绑定角色不同，记录状态
+      if (activeRoleId && activeRoleId !== this.currentSession.systemPromptId) {
+        Logger.info('ChatViewModel', `使用临时活跃角色: ${activeRoleId}`);
+      }
+    } else {
+      Logger.warn('ChatViewModel', `未找到系统提示词: ${targetPromptId}`);
+    }
+
+    return prompt || null;
   }
 
   /**
-   * 获取当前会话系统提示词内容
+   * 获取当前会话系统提示词内容 - 增强版本支持多轮角色对话
    * 记忆功能现在通过search_memories工具动态获取，不再预先注入
    */
   async getSystemPromptWithMemory(): Promise<string> {
@@ -1935,13 +1996,95 @@ ${debateMessages.map(m => `${m.senderName || '参与者'}: ${m.content}`).join('
       const originalPrompt = this.getCurrentSessionSystemPrompt();
       const systemPromptContent = originalPrompt?.content || '';
 
-      Logger.debug('ChatViewModel', '返回原始系统提示词，记忆通过工具动态获取');
+      if (originalPrompt) {
+        Logger.info('ChatViewModel', `应用系统提示词: ${originalPrompt.name} (${originalPrompt.isRole ? '角色模式' : '普通模式'})`);
+        Logger.debug('ChatViewModel', `提示词内容长度: ${systemPromptContent.length} 字符`);
+
+        if (originalPrompt.isRole) {
+          Logger.info('ChatViewModel', `角色信息: ${originalPrompt.roleCategory} - ${originalPrompt.roleDescription}`);
+        }
+      } else {
+        Logger.warn('ChatViewModel', '当前会话未绑定系统提示词，将使用默认行为');
+      }
+
       return systemPromptContent;
     } catch (error) {
       Logger.error('ChatViewModel', `获取系统提示词失败: ${error}`);
       // 出错时返回空字符串
       return '';
     }
+  }
+
+  /**
+   * 切换当前会话的活跃角色
+   */
+  async switchActiveRole(roleId: string): Promise<void> {
+    try {
+      if (!this.currentSession) {
+        Logger.warn('ChatViewModel', '没有当前会话，无法切换活跃角色');
+        return;
+      }
+
+      // 验证角色是否存在
+      const role = this.systemPrompts.find(p => p.id === roleId && p.isRole);
+      if (!role) {
+        Logger.warn('ChatViewModel', `角色不存在: ${roleId}`);
+        return;
+      }
+
+      // 设置活跃角色
+      this.currentSession.setActiveRole(roleId);
+
+      // 保存会话更新（只更新时间，不改变其他信息）
+      await this.sessionManager.updateSessionInfo(this.currentSession.id, undefined, {});
+
+      Logger.info('ChatViewModel', `已切换活跃角色: ${role.name} (${roleId})`);
+
+      // 立即重新加载提示词以确保下次消息使用新角色
+      await this.loadSystemPrompts();
+    } catch (error) {
+      Logger.error('ChatViewModel', `切换活跃角色失败: ${error}`);
+    }
+  }
+
+  /**
+   * 清除当前会话的活跃角色（回到默认绑定角色）
+   */
+  async clearActiveRole(): Promise<void> {
+    try {
+      if (!this.currentSession) {
+        Logger.warn('ChatViewModel', '没有当前会话，无法清除活跃角色');
+        return;
+      }
+
+      this.currentSession.clearActiveRole();
+
+      // 保存会话更新（只更新时间，不改变其他信息）
+      await this.sessionManager.updateSessionInfo(this.currentSession.id, undefined, {});
+
+      Logger.info('ChatViewModel', '已清除活跃角色，回到默认绑定角色');
+
+      // 立即重新加载提示词
+      await this.loadSystemPrompts();
+    } catch (error) {
+      Logger.error('ChatViewModel', `清除活跃角色失败: ${error}`);
+    }
+  }
+
+  /**
+   * 获取当前活跃角色信息
+   */
+  getCurrentActiveRole(): SystemPrompt | null {
+    if (!this.currentSession) {
+      return null;
+    }
+
+    const activeRoleId = this.currentSession.getActiveRoleId?.() || this.currentSession.activeRoleId;
+    if (!activeRoleId) {
+      return null;
+    }
+
+    return this.systemPrompts.find(p => p.id === activeRoleId && p.isRole) || null;
   }
 
   /**

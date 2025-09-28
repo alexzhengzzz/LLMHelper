@@ -1131,7 +1131,26 @@ struct ChatPage {
 
   // Helper method to get role name for message display
   private getMessageRoleName(message: Message): string {
+    // 如果消息有 senderRoleId，从多角色会话中获取对应的参与者名称
+    if (message.senderRoleId) {
+      const participant = this.getParticipantByRoleId(message.senderRoleId);
+      if (participant) {
+        return participant.displayName;
+      }
+    }
+
+    // 否则使用当前会话角色或系统提示词名称
     return this.currentSessionRole?.name || this.chatViewModel.getCurrentSessionSystemPrompt()?.name || 'AI助手';
+  }
+
+  // Helper method to get participant by role ID
+  private getParticipantByRoleId(roleId: string): SessionParticipant | undefined {
+    if (!this.chatViewModel.currentSession || !isMultiRoleSession(this.chatViewModel.currentSession)) {
+      return undefined;
+    }
+
+    const multiRoleSession = this.chatViewModel.currentSession as MultiRoleSession;
+    return multiRoleSession.participants.find(p => p.roleId === roleId);
   }
 
   /**

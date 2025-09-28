@@ -556,6 +556,7 @@ export interface SessionParticipantData {
   displayName: string;
   avatar?: string;
   model?: string;
+  systemPrompt?: string; // 角色的完整系统提示词
 }
 
 @ObservedV2
@@ -564,16 +565,18 @@ export class SessionParticipant {
   @Trace displayName: string = '';
   @Trace avatar?: string;
   @Trace model?: string;
+  @Trace systemPrompt?: string; // 角色的完整系统提示词
 
-  constructor(roleId: string, displayName: string, avatar?: string, model?: string) {
+  constructor(roleId: string, displayName: string, avatar?: string, model?: string, systemPrompt?: string) {
     this.roleId = roleId;
     this.displayName = displayName;
     this.avatar = avatar;
     this.model = model;
+    this.systemPrompt = systemPrompt;
   }
 
   static fromObject(data: SessionParticipantData): SessionParticipant {
-    return new SessionParticipant(data.roleId, data.displayName, data.avatar, data.model);
+    return new SessionParticipant(data.roleId, data.displayName, data.avatar, data.model, data.systemPrompt);
   }
 
   toObject(): SessionParticipantData {
@@ -581,7 +584,8 @@ export class SessionParticipant {
       roleId: this.roleId,
       displayName: this.displayName,
       avatar: this.avatar,
-      model: this.model
+      model: this.model,
+      systemPrompt: this.systemPrompt
     };
   }
 }
@@ -594,6 +598,7 @@ export interface SessionData {
   messageCount: number;
   systemPromptId: string | null; // 绑定的系统提示词ID
   roleId?: string; // 关联的角色ID（用于专门标识角色会话）
+  activeRoleId?: string; // 当前活跃的角色ID（用于多轮对话动态角色切换）
 }
 
 export interface MultiRoleSessionData extends SessionData {
@@ -612,12 +617,14 @@ export class Session {
   @Trace messageCount: number = 0;
   @Trace systemPromptId: string | null = null; // 绑定的系统提示词ID
   @Trace roleId?: string; // 关联的角色ID（用于专门标识角色会话）
+  @Trace activeRoleId?: string; // 当前活跃的角色ID（用于多轮对话动态角色切换）
 
   constructor(name: string = '', systemPromptId: string | null = null, roleId?: string, id?: string) {
     this.id = id || this.generateId();
     this.name = name;
     this.systemPromptId = systemPromptId;
     this.roleId = roleId;
+    this.activeRoleId = roleId; // 初始化时活跃角色为绑定角色
     this.createdAt = Date.now();
     this.updatedAt = Date.now();
     this.messageCount = 0;
@@ -633,6 +640,29 @@ export class Session {
   updateInfo(messageCount: number = this.messageCount, name: string = this.name): void {
     this.messageCount = messageCount;
     this.name = name;
+    this.updatedAt = Date.now();
+  }
+
+  /**
+   * 设置当前活跃角色
+   */
+  setActiveRole(roleId: string): void {
+    this.activeRoleId = roleId;
+    this.updatedAt = Date.now();
+  }
+
+  /**
+   * 获取当前活跃角色ID
+   */
+  getActiveRoleId(): string | undefined {
+    return this.activeRoleId;
+  }
+
+  /**
+   * 清除活跃角色（回到默认绑定角色）
+   */
+  clearActiveRole(): void {
+    this.activeRoleId = this.roleId;
     this.updatedAt = Date.now();
   }
 

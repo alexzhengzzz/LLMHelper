@@ -171,7 +171,7 @@ export class SessionManager {
       }
 
       const participants = participantPrompts.map(prompt =>
-        new SessionParticipant(prompt.id, prompt.name, prompt.roleIcon || undefined)
+        new SessionParticipant(prompt.id, prompt.name, prompt.roleIcon || undefined, undefined, prompt.content)
       );
       const normalizedParticipants = this.normalizeParticipants(participants);
 

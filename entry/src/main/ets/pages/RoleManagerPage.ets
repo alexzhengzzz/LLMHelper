@@ -215,26 +215,7 @@ struct RoleManagerPage {
 
       Blank()
 
-      // 修复角色按钮
-      Button() {
-        Text('🔧')
-          .fontSize(16)
-          .fontColor($r('app.color.text_primary'))
-      }
-      .width(40)
-      .height(40)
-      .backgroundColor($r('app.color.input_background'))
-      .borderRadius(20)
-      .border({
-        width: 0.5,
-        color: $r('app.color.border_color')
-      })
-      .margin({ right: 8 })
-      .onClick(() => {
-        this.fixSystemPrompts();
-      })
-
-      // 刷新角色按钮
+      // 刷新/修复按钮
       Button() {
         Text('🔄')
           .fontSize(16)
@@ -250,7 +231,7 @@ struct RoleManagerPage {
       })
       .margin({ right: 8 })
       .onClick(() => {
-        this.refreshRoles();
+        this.refreshAndFixRoles();
       })
 
       // 现代化添加按钮 - 圆形图标按钮
@@ -1715,6 +1696,68 @@ struct RoleManagerPage {
       Logger.error('RoleManagerPage', `刷新角色列表失败: ${error}`);
       promptAction.showToast({
         message: `刷新失败: ${(error as Error).message}`,
+        duration: 3000
+      });
+    }
+  }
+
+  /**
+   * 合并的刷新和修复功能
+   */
+  private async refreshAndFixRoles(): Promise<void> {
+    try {
+      Logger.info('RoleManagerPage', '开始刷新和修复角色数据');
+
+      // 显示loading提示
+      promptAction.showToast({
+        message: '正在刷新和修复角色数据...',
+        duration: 3000
+      });
+
+      // 1. 修复系统提示词转角色
+      const convertedCount = await this.roleManager.convertSystemPromptsToRoles();
+
+      // 2. 修复角色分类
+      const categoryFixedCount = await this.roleManager.fixRoleCategories();
+
+      // 3. 强制重新初始化默认角色
+      await this.roleManager.forceInitializeDefaultRoles();
+
+      // 4. 重新加载角色列表
+      await this.loadRoles();
+
+      const totalFixed = convertedCount + categoryFixedCount;
+
+      if (totalFixed > 0) {
+        // 显示修复和刷新结果
+        let message = '';
+        if (convertedCount > 0 && categoryFixedCount > 0) {
+          message = `成功修复 ${convertedCount} 个系统提示词，${categoryFixedCount} 个角色分类，并刷新角色列表！`;
+        } else if (convertedCount > 0) {
+          message = `成功修复 ${convertedCount} 个系统提示词，并刷新角色列表！`;
+        } else if (categoryFixedCount > 0) {
+          message = `成功修复 ${categoryFixedCount} 个角色分类，并刷新角色列表！`;
+        }
+
+        promptAction.showToast({
+          message: message || '角色数据已刷新和修复！',
+          duration: 3000
+        });
+
+        Logger.info('RoleManagerPage', message || '角色数据已刷新和修复');
+      } else {
+        // 显示只有刷新的提示
+        promptAction.showToast({
+          message: '角色列表已刷新，所有数据正常',
+          duration: 2000
+        });
+
+        Logger.info('RoleManagerPage', '角色列表已刷新，没有需要修复的数据');
+      }
+    } catch (error) {
+      Logger.error('RoleManagerPage', `刷新和修复角色数据失败: ${error}`);
+      promptAction.showToast({
+        message: `操作失败: ${(error as Error).message}`,
         duration: 3000
       });
     }
