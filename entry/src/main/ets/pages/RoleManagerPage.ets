@@ -885,7 +885,7 @@ struct RoleManagerPage {
           
           TextArea({ placeholder: '请详细描述您希望AI助手扮演的角色和行为方式...' })
             .width('100%')
-            .height(140)
+            .height(200)
             .backgroundColor($r('app.color.input_background'))
             .borderRadius(12)
             .padding(16)
@@ -1053,23 +1053,44 @@ struct RoleManagerPage {
           }
           .alignItems(VerticalAlign.Center)
 
+          if (this.editingRole?.isBuiltIn) {
+          // 查看模式 - 使用Scroll + Text组合支持滚动
+          Scroll() {
+            Text(this.editRoleContent || '暂无内容')
+              .width('100%')
+              .fontSize(14)
+              .fontColor($r('app.color.text_primary'))
+              .textAlign(TextAlign.Start)
+              .lineHeight(20)
+              .padding(16)
+          }
+          .width('100%')
+          .height(200)
+          .scrollBar(BarState.Auto)
+          .scrollable(ScrollDirection.Vertical)
+          .edgeEffect(EdgeEffect.Spring)
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius(12)
+          .border({
+            width: 1,
+            color: $r('app.color.border_color')
+          })
+        } else {
+          // 编辑模式 - 使用TextArea
           TextArea({ placeholder: '请输入角色内容', text: this.editRoleContent })
             .width('100%')
-            .height(140)
-            .backgroundColor(this.editingRole?.isBuiltIn ? $r('app.color.card_background') : $r('app.color.input_background'))
+            .height(200)
+            .backgroundColor($r('app.color.input_background'))
             .borderRadius(12)
             .padding(16)
             .border({
               width: 1,
-              color: this.editingRole?.isBuiltIn ? $r('app.color.border_color') :
-                (this.editRoleContent.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color'))
+              color: this.editRoleContent.trim().length > 0 ? $r('app.color.primary_color') : $r('app.color.border_color')
             })
-            .enabled(!this.editingRole?.isBuiltIn)
             .onChange((value: string) => {
-              if (!this.editingRole?.isBuiltIn) {
-                this.editRoleContent = value;
-              }
+              this.editRoleContent = value;
             })
+        }
         }
         .alignItems(HorizontalAlign.Start)
       }
